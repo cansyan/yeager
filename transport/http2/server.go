@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chenen3/yeager/logger"
+	"github.com/cansyan/yeager/logger"
 )
 
 // NewServer starts a HTTP/2 Server for forward proxying.

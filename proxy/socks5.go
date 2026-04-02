@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chenen3/yeager/logger"
-	"github.com/chenen3/yeager/transport"
+	"github.com/cansyan/yeager/logger"
+	"github.com/cansyan/yeager/transport"
 )
 
 type socks5Server struct {

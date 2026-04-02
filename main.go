@@ -12,8 +12,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/chenen3/yeager/config"
-	"github.com/chenen3/yeager/logger"
+	"github.com/cansyan/yeager/config"
+	"github.com/cansyan/yeager/logger"
 )
 
 var version string // set by build -ldflags

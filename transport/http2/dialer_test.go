@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chenen3/yeager/config"
-	"github.com/chenen3/yeager/echo"
+	"github.com/cansyan/yeager/config"
+	"github.com/cansyan/yeager/echo"
 )
 
 func run() (*http.Server, *dialer, error) {

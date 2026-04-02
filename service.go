@@ -10,15 +10,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chenen3/yeager/config"
-	"github.com/chenen3/yeager/logger"
-	"github.com/chenen3/yeager/proxy"
-	"github.com/chenen3/yeager/transport"
-	"github.com/chenen3/yeager/transport/grpc"
-	"github.com/chenen3/yeager/transport/http2"
-	"github.com/chenen3/yeager/transport/https"
-	"github.com/chenen3/yeager/transport/shadowsocks"
-	"github.com/chenen3/yeager/transport/vmess"
+	"github.com/cansyan/yeager/config"
+	"github.com/cansyan/yeager/logger"
+	"github.com/cansyan/yeager/proxy"
+	"github.com/cansyan/yeager/transport"
+	"github.com/cansyan/yeager/transport/grpc"
+	"github.com/cansyan/yeager/transport/http2"
+	"github.com/cansyan/yeager/transport/https"
+	"github.com/cansyan/yeager/transport/shadowsocks"
+	"github.com/cansyan/yeager/transport/vmess"
 )
 
 // start the service specified by config.

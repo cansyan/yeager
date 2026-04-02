@@ -1,7 +1,7 @@
 import os
 
 def install():
-    os.system("wget https://github.com/chenen3/yeager/releases/latest/download/yeager-linux-amd64.tar.gz")
+    os.system("wget https://github.com/cansyan/yeager/releases/latest/download/yeager-linux-amd64.tar.gz")
     os.system("tar -xvf yeager-linux-amd64.tar.gz")
     os.system("cp yeager /usr/local/bin/yeager")
     cfgdir = "/usr/local/etc/yeager"
@@ -13,7 +13,7 @@ def install():
 serviceConfig = '''
 [Unit]
 Description=yeager
-Documentation=https://github.com/chenen3/yeager
+Documentation=https://github.com/cansyan/yeager
 After=network.target
 
 [Service]

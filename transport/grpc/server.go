@@ -7,8 +7,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/chenen3/yeager/logger"
-	"github.com/chenen3/yeager/transport/grpc/pb"
+	"github.com/cansyan/yeager/logger"
+	"github.com/cansyan/yeager/transport/grpc/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"

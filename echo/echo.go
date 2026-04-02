@@ -6,7 +6,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/chenen3/yeager/logger"
+	"github.com/cansyan/yeager/logger"
 )
 
 // Server accepts connection and writes back anything it reads.

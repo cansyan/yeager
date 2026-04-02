@@ -20,7 +20,7 @@ $ sudo sysctl -w net.ipv4.tcp_congestion_control=bbr
 
 ### Running with command line
 ```sh
-$ wget https://github.com/chenen3/yeager/releases/latest/download/yeager-linux-amd64.tar.gz
+$ wget https://github.com/cansyan/yeager/releases/latest/download/yeager-linux-amd64.tar.gz
 $ tar -xzvf yeager-linux-amd64.tar.gz 
 $ ./yeager -genconf
 generated server.json
@@ -30,7 +30,7 @@ $ ./yeager -config server.json
 
 ### Running with systemd
 ```sh
-$ wget https://github.com/chenen3/yeager/releases/latest/download/yeager-linux-amd64.tar.gz
+$ wget https://github.com/cansyan/yeager/releases/latest/download/yeager-linux-amd64.tar.gz
 $ tar -xzvf yeager-linux-amd64.tar.gz 
 $ sudo cp yeager /usr/local/bin/yeager
 $ sudo mkdir -p /usr/local/etc/yeager
@@ -45,7 +45,7 @@ create file `/etc/systemd/system/yeager.service` with the following content:
 ```
 [Unit]
 Description=yeager
-Documentation=https://github.com/chenen3/yeager
+Documentation=https://github.com/cansyan/yeager
 After=network.target
 
 [Service]
@@ -72,7 +72,7 @@ $ sudo systemctl start yeager
 
 Copy `client.json` to local device.
 
-Download [binary](https://github.com/chenen3/yeager/releases/latest), extract and run:
+Download [binary](https://github.com/cansyan/yeager/releases/latest), extract and run:
 ```sh
 $ ./yeager -config client.json
 ```
@@ -86,7 +86,7 @@ Copy `client.json` to `/usr/local/etc/yeager.json`
 
 Install:
 ```sh
-$ curl -LO https://github.com/chenen3/yeager/releases/latest/download/yeager-macos-amd64.tar.gz
+$ curl -LO https://github.com/cansyan/yeager/releases/latest/download/yeager-macos-amd64.tar.gz
 $ tar -xzvf yeager-macos-amd64.tar.gz
 x yeager
 x README.md

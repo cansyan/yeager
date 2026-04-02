@@ -1,4 +1,4 @@
-module github.com/chenen3/yeager
+module github.com/cansyan/yeager
 
 go 1.21
 

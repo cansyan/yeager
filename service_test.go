@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chenen3/yeager/proxy"
-	"github.com/chenen3/yeager/transport/https"
+	"github.com/cansyan/yeager/proxy"
+	"github.com/cansyan/yeager/transport/https"
 )
 
 func localAddr() string {

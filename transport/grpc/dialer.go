@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chenen3/yeager/transport"
-	"github.com/chenen3/yeager/transport/grpc/pb"
+	"github.com/cansyan/yeager/transport"
+	"github.com/cansyan/yeager/transport/grpc/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/connectivity"
