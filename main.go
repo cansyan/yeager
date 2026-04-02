@@ -28,11 +28,10 @@ func main() {
 		pprofHTTP  string
 	}
 	flag.StringVar(&flags.configFile, "config", "", "path to configuration file")
+	flag.BoolVar(&flags.verbose, "v", false, "verbose logging")
 	flag.BoolVar(&flags.version, "version", false, "print version")
 	flag.BoolVar(&flags.genConfig, "genconf", false, "generate config")
 	flag.StringVar(&flags.ip, "ip", "", "IP for the certificate, using with option -genconf")
-	flag.BoolVar(&flags.verbose, "verbose", false, "verbose logging")
-	flag.StringVar(&flags.pprofHTTP, "pprof_http", "", "serve HTTP at host:port for profiling")
 	flag.Parse()
 
 	if flags.verbose {

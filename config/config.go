@@ -33,6 +33,7 @@ const (
 	ProtoGRPC        = "grpc"
 	ProtoHTTP2       = "h2"
 	ProtoShadowsocks = "ss"
+	ProtoVMess       = "vmess"
 )
 
 type ServerConfig struct {
@@ -48,7 +49,7 @@ type ServerConfig struct {
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
 
-	// for shadowsocks
+	// for shadowsocks, vmess
 	Cipher string `json:"cipher,omitempty"`
 	Secret string `json:"secret,omitempty"`
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/chenen3/yeager/transport/http2"
 	"github.com/chenen3/yeager/transport/https"
 	"github.com/chenen3/yeager/transport/shadowsocks"
+	"github.com/chenen3/yeager/transport/vmess"
 )
 
 // start the service specified by config.
@@ -157,6 +158,14 @@ func newStreamDialer(c config.ServerConfig) (transport.Dialer, error) {
 			return nil, err
 		}
 		dialer = d
+
+	case config.ProtoVMess:
+		d, err := vmess.NewDialer(c.Address, c.Secret, c.Cipher, 0)
+		if err != nil {
+			return nil, err
+		}
+		dialer = d
+
 	case config.ProtoHTTP:
 		dialer = https.NewDialer(c.Address)
 	default:
@@ -255,7 +264,7 @@ func (g *dialerGroup) pick() {
 	g.mu.Lock()
 	g.dialer = winner
 	g.mu.Unlock()
-	logger.Debug.Printf("pick transport: %s %s", winnerCfg.Protocol, winnerCfg.Address)
+	logger.Info.Printf("selected transport: %s %s", winnerCfg.Protocol, winnerCfg.Address)
 }
 
 // implements interface transport.StreamDialer
@@ -412,7 +421,7 @@ func (m domainMatch) match(host string, ip net.IP) bool {
 func testConnection(d transport.Dialer) (time.Duration, error) {
 	client := &http.Client{
 		Transport: &http.Transport{DialContext: d.DialContext},
-		Timeout:   3 * time.Second,
+		Timeout:   5 * time.Second,
 	}
 	defer client.CloseIdleConnections()
 	start := time.Now()
