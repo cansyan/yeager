@@ -10,183 +10,50 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cansyan/yeager/config"
 	"github.com/cansyan/yeager/logger"
-	"github.com/cansyan/yeager/proxy"
 	"github.com/cansyan/yeager/transport"
-	"github.com/cansyan/yeager/transport/grpc"
-	"github.com/cansyan/yeager/transport/http2"
-	"github.com/cansyan/yeager/transport/https"
 	"github.com/cansyan/yeager/transport/shadowsocks"
 	"github.com/cansyan/yeager/transport/vmess"
 )
 
-// start the service specified by config.
-// The caller should call stop when finished.
-func start(cfg config.Config) (stop func(), err error) {
-	var onStop []func() error
-	defer func() {
-		if err != nil {
-			for _, f := range onStop {
-				if e := f(); e != nil {
-					logger.Error.Print(e)
-				}
-			}
-		}
-	}()
-
-	if len(cfg.Transport) == 0 && len(cfg.Listen) == 0 {
-		return nil, errors.New("missing client and server config")
-	}
-
-	var dialer transport.Dialer
-	getDialer := func() (transport.Dialer, error) {
-		if dialer != nil {
-			return dialer, nil
-		}
-		if len(cfg.Transport) == 0 {
-			return nil, errors.New("missing transport config")
-		}
-		d, err := newDialerGroup(cfg.Transport, cfg.Bypass, cfg.Block)
-		if err != nil {
-			return nil, err
-		}
-		if v, ok := d.(io.Closer); ok {
-			onStop = append(onStop, v.Close)
-		}
-		dialer = d
-		return dialer, nil
-	}
-
-	for _, c := range cfg.Listen {
-		switch c.Protocol {
-		case config.ProtoHTTP:
-			dialer, err := getDialer()
-			if err != nil {
-				return nil, err
-			}
-			listener, err := net.Listen("tcp", c.Address)
-			if err != nil {
-				return nil, err
-			}
-			s := &http.Server{Handler: proxy.NewHTTPHandler(dialer)}
-			go func() {
-				err := s.Serve(listener)
-				if err != nil && err != http.ErrServerClosed {
-					logger.Error.Printf("serve http: %s", err)
-				}
-			}()
-			onStop = append(onStop, s.Close)
-		case config.ProtoSOCKS5:
-			dialer, err := getDialer()
-			if err != nil {
-				return nil, err
-			}
-			listener, err := net.Listen("tcp", c.Address)
-			if err != nil {
-				return nil, err
-			}
-			s := proxy.NewSOCKS5Server(dialer)
-			go func() {
-				err := s.Serve(listener)
-				if err != nil {
-					logger.Error.Printf("serve socks5: %s", err)
-				}
-			}()
-			onStop = append(onStop, s.Close)
-		case config.ProtoGRPC:
-			tlsConf, err := c.ServerTLS()
-			if err != nil {
-				return nil, err
-			}
-			s, err := grpc.NewServer(c.Address, tlsConf)
-			if err != nil {
-				return nil, err
-			}
-			onStop = append(onStop, func() error {
-				s.Stop()
-				return nil
-			})
-		case config.ProtoHTTP2:
-			tlsConf, err := c.ServerTLS()
-			if err != nil {
-				return nil, err
-			}
-			s, err := http2.NewServer(c.Address, tlsConf, c.Username, c.Password)
-			if err != nil {
-				return nil, err
-			}
-			onStop = append(onStop, s.Close)
-		default:
-			return nil, errors.New("unknown protocol: " + c.Protocol)
-		}
-		logger.Info.Printf("listen %s %s", c.Protocol, c.Address)
-	}
-
-	stop = func() {
-		for _, f := range onStop {
-			if e := f(); e != nil {
-				logger.Error.Print(e)
-			}
-		}
-	}
-	return stop, nil
-}
-
-func newStreamDialer(c config.ServerConfig) (transport.Dialer, error) {
+func newStreamDialer(c ServerConfig) (transport.Dialer, error) {
 	var dialer transport.Dialer
 	switch c.Protocol {
-	case config.ProtoGRPC:
-		tlsConf, err := c.ClientTLS()
-		if err != nil {
-			return nil, err
-		}
-		dialer = grpc.NewStreamDialer(c.Address, tlsConf)
-	case config.ProtoHTTP2:
-		if c.Username != "" {
-			dialer = http2.NewStreamDialer(c.Address, nil, c.Username, c.Password)
-		} else {
-			tlsConf, err := c.ClientTLS()
-			if err != nil {
-				return nil, err
-			}
-			dialer = http2.NewStreamDialer(c.Address, tlsConf, "", "")
-		}
-	case config.ProtoShadowsocks:
+	case ProtoShadowsocks:
 		d, err := shadowsocks.NewDialer(c.Address, c.Cipher, c.Secret)
 		if err != nil {
 			return nil, err
 		}
 		dialer = d
-
-	case config.ProtoVMess:
+	case ProtoVMess:
 		d, err := vmess.NewDialer(c.Address, c.Secret, c.Cipher, 0)
 		if err != nil {
 			return nil, err
 		}
 		dialer = d
-
-	case config.ProtoHTTP:
-		dialer = https.NewDialer(c.Address)
 	default:
-		return nil, errors.New("unsupported transport protocol: " + c.Protocol)
+		return nil, errors.New("unsupported protocol: " + c.Protocol)
 	}
 	return dialer, nil
 }
 
 type dialerGroup struct {
-	transports []config.ServerConfig
-	mu         sync.RWMutex
-	dialer     transport.Dialer
-	bypass     *hostMatcher
-	block      *hostMatcher
-	ticker     *time.Ticker
+	transports []ServerConfig
+
+	mu     sync.RWMutex
+	ticker *time.Ticker
+	best   ServerConfig
+	dialer transport.Dialer
+
+	bypass  *hostMatcher
+	block   *hostMatcher
+	urltest urltest
 }
 
 // newDialerGroup returns a new stream dialer.
 // Given multiple transport config, it creates a dialer group to
 // perform periodic health checks and switch server if necessary.
-func newDialerGroup(transports []config.ServerConfig, bypass, block string) (transport.Dialer, error) {
+func newDialerGroup(transports []ServerConfig, bypass, block string, urltest urltest) (transport.Dialer, error) {
 	if len(transports) == 0 {
 		return nil, errors.New("missing transport config")
 	}
@@ -204,23 +71,29 @@ func newDialerGroup(transports []config.ServerConfig, bypass, block string) (tra
 			return nil, err
 		}
 		g.dialer = d
+		// only one server, no url test
 		return g, nil
 	}
 
 	g.transports = transports
-	g.ticker = time.NewTicker(30 * time.Second)
+	g.urltest = urltest
+	interval := urltest.Interval
+	if interval == 0 {
+		interval = 3
+	}
+	g.ticker = time.NewTicker(time.Duration(interval) * time.Second)
 	go func() {
-		g.pick()
+		g.Select()
 		for range g.ticker.C {
-			g.pick()
+			g.Select()
 		}
 	}()
 	return g, nil
 }
 
-func (g *dialerGroup) pick() {
+func (g *dialerGroup) Select() {
 	var winner transport.Dialer
-	var winnerCfg config.ServerConfig
+	var winnerCfg ServerConfig
 	var min time.Duration
 	for _, t := range g.transports {
 		d, err := newStreamDialer(t)
@@ -229,7 +102,7 @@ func (g *dialerGroup) pick() {
 			continue
 		}
 
-		du, err := testConnection(d)
+		du, err := testURL(d, g.urltest.URL, time.Duration(g.urltest.Timeout)*time.Second)
 		if err != nil {
 			logger.Debug.Printf("test connection through %s: %s", t.Address, err)
 			continue
@@ -258,11 +131,16 @@ func (g *dialerGroup) pick() {
 		return
 	}
 
+	if g.best.Protocol == winnerCfg.Protocol && g.best.Address == winnerCfg.Address {
+		return
+	}
+
 	if v, ok := g.dialer.(io.Closer); ok {
 		v.Close()
 	}
 	g.mu.Lock()
 	g.dialer = winner
+	g.best = winnerCfg
 	g.mu.Unlock()
 	logger.Info.Printf("selected transport: %s %s", winnerCfg.Protocol, winnerCfg.Address)
 }
@@ -418,14 +296,22 @@ func (m domainMatch) match(host string, ip net.IP) bool {
 	return before == "" || before[len(before)-1] == '.'
 }
 
-func testConnection(d transport.Dialer) (time.Duration, error) {
+func testURL(d transport.Dialer, url string, timeout time.Duration) (time.Duration, error) {
+	if url == "" {
+		url = "http://www.gstatic.com/generate_204"
+	}
+	if timeout == 0 {
+		timeout = 3 * time.Second
+	}
+
 	client := &http.Client{
 		Transport: &http.Transport{DialContext: d.DialContext},
-		Timeout:   5 * time.Second,
+		Timeout:   timeout,
 	}
 	defer client.CloseIdleConnections()
 	start := time.Now()
-	resp, err := client.Get("http://www.gstatic.com/generate_204")
+
+	resp, err := client.Get(url)
 	if err != nil {
 		return 0, err
 	}

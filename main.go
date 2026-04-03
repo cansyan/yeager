@@ -2,140 +2,123 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
-	"fmt"
-	"io"
+	"net"
 	"net/http"
-	_ "net/http/pprof"
+	"net/url"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
-	"github.com/cansyan/yeager/config"
 	"github.com/cansyan/yeager/logger"
+	"github.com/cansyan/yeager/transport"
 )
-
-var version string // set by build -ldflags
 
 func main() {
 	var flags struct {
-		configFile string
-		version    bool
-		genConfig  bool
-		ip         string
-		verbose    bool
-		pprofHTTP  string
+		config  string
+		version bool
+		verbose bool
 	}
-	flag.StringVar(&flags.configFile, "config", "", "path to configuration file")
+	flag.StringVar(&flags.config, "c", "", "path to config file")
 	flag.BoolVar(&flags.verbose, "v", false, "verbose logging")
-	flag.BoolVar(&flags.version, "version", false, "print version")
-	flag.BoolVar(&flags.genConfig, "genconf", false, "generate config")
-	flag.StringVar(&flags.ip, "ip", "", "IP for the certificate, using with option -genconf")
 	flag.Parse()
 
 	if flags.verbose {
 		logger.Debug.SetOutput(os.Stderr)
 	}
-	if flags.version {
-		fmt.Printf("yeager version %s\n", version)
-		return
-	}
 
-	if flags.genConfig {
-		ip := flags.ip
-		if ip == "" {
-			i, err := checkIP()
-			if err != nil {
-				fmt.Printf("get public IP: %s\n", err)
-				return
-			}
-			ip = i
-		}
-		if err := genConfig(ip, "client.json", "server.json"); err != nil {
-			fmt.Println(err)
-			return
-		}
-		return
-	}
-
-	if flags.configFile == "" {
+	if flags.config == "" {
 		flag.Usage()
 		return
 	}
-	bs, err := os.ReadFile(flags.configFile)
+	bs, err := os.ReadFile(flags.config)
 	if err != nil {
 		logger.Error.Printf("read config: %s", err)
 		return
 	}
-	var conf config.Config
+	var conf Config
 	if err = json.Unmarshal(bs, &conf); err != nil {
 		logger.Error.Printf("load config: %s", err)
 		return
 	}
 
-	logger.Info.Printf("starting yeager %s", version)
-	stop, err := start(conf)
-	if err != nil {
-		logger.Error.Printf("start service: %s", err)
+	if len(conf.Listen) == 0 || len(conf.Proxy) == 0 {
+		logger.Error.Print("invalid config")
 		return
 	}
-	defer stop()
 
-	if flags.pprofHTTP != "" {
-		go func() {
-			logger.Info.Println(http.ListenAndServe(flags.pprofHTTP, nil))
-		}()
+	var dialer transport.Dialer
+	getDialer := func() (transport.Dialer, error) {
+		if dialer != nil {
+			return dialer, nil
+		}
+		if len(conf.Proxy) == 0 {
+			return nil, errors.New("missing transport config")
+		}
+		d, err := newDialerGroup(conf.Proxy, conf.Bypass, conf.Block, conf.URLTest)
+		if err != nil {
+			return nil, err
+		}
+		dialer = d
+		return dialer, nil
+	}
+
+	for _, proxyURL := range conf.Listen {
+		u, err := url.Parse(proxyURL)
+		if err != nil {
+			logger.Error.Print(err)
+			return
+		}
+		switch u.Scheme {
+		case "http":
+			dialer, err := getDialer()
+			if err != nil {
+				logger.Error.Print(err)
+				return
+			}
+			listener, err := net.Listen("tcp", u.Host)
+			if err != nil {
+				logger.Error.Print(err)
+				return
+			}
+			s := &http.Server{Handler: NewProxyHandler(dialer)}
+			go func() {
+				err := s.Serve(listener)
+				if err != nil && err != http.ErrServerClosed {
+					logger.Error.Printf("serve http: %s", err)
+				}
+			}()
+			defer s.Close()
+		case "socks5":
+			dialer, err := getDialer()
+			if err != nil {
+				logger.Error.Print(err)
+				return
+			}
+			listener, err := net.Listen("tcp", u.Host)
+			if err != nil {
+				logger.Error.Print(err)
+				return
+			}
+			s := NewSOCKS5Server(dialer)
+			go func() {
+				err := s.Serve(listener)
+				if err != nil {
+					logger.Error.Printf("serve socks5: %s", err)
+				}
+			}()
+			defer s.Close()
+		default:
+			logger.Error.Print("unsupported protocol: " + u.Scheme)
+			return
+		}
+		logger.Info.Printf("listen %s", proxyURL)
 	}
 
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
 	sig := <-ch
 	logger.Info.Printf("received %s", sig)
-}
-
-func checkIP() (string, error) {
-	resp, err := http.Get("https://checkip.amazonaws.com")
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	ip, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(ip)), nil
-}
-
-func genConfig(host, cliConfOutput, srvConfOutput string) error {
-	if _, err := os.Stat(srvConfOutput); err == nil {
-		return fmt.Errorf("file %s already exists, operation aborted", srvConfOutput)
-	}
-	if _, err := os.Stat(cliConfOutput); err == nil {
-		return fmt.Errorf("file %s already exists, operation aborted", cliConfOutput)
-	}
-
-	cliConf, srvConf, err := config.Generate(host)
-	if err != nil {
-		return fmt.Errorf("failed to generate config: %s", err)
-	}
-	bs, err := json.MarshalIndent(srvConf, "", "\t")
-	if err != nil {
-		return fmt.Errorf("failed to marshal server config: %s", err)
-	}
-	if err = os.WriteFile(srvConfOutput, bs, 0644); err != nil {
-		return fmt.Errorf("failed to write server config: %s", err)
-	}
-	fmt.Println("generated", srvConfOutput)
-
-	bs, err = json.MarshalIndent(cliConf, "", "\t")
-	if err != nil {
-		return fmt.Errorf("failed to marshal client config: %s", err)
-	}
-	err = os.WriteFile(cliConfOutput, bs, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to write client config: %s", err)
-	}
-	fmt.Println("generated", cliConfOutput)
-	return nil
 }

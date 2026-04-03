@@ -1,4 +1,4 @@
-package proxy
+package main
 
 // This HTTP proxy is adapted from the httpproxy library in outline-sdk,
 // which is more intuitive and clear than mine (written with TCP server).
@@ -13,17 +13,17 @@ import (
 	"github.com/cansyan/yeager/transport"
 )
 
-type httpHandler struct {
+type proxyHandler struct {
 	dialer transport.Dialer
 }
 
-// NewHTTPHandler creates a http.Handler that acts as a web proxy
+// NewProxyHandler creates a http.Handler that acts as a web proxy
 // to reach the destination using the given dialer.
-func NewHTTPHandler(dialer transport.Dialer) *httpHandler {
-	return &httpHandler{dialer: dialer}
+func NewProxyHandler(dialer transport.Dialer) *proxyHandler {
+	return &proxyHandler{dialer: dialer}
 }
 
-func (h *httpHandler) ServeHTTP(proxyResp http.ResponseWriter, proxyReq *http.Request) {
+func (h *proxyHandler) ServeHTTP(proxyResp http.ResponseWriter, proxyReq *http.Request) {
 	if proxyReq.Method == http.MethodConnect {
 		h.serveHTTPConnect(proxyResp, proxyReq)
 		return
@@ -31,7 +31,7 @@ func (h *httpHandler) ServeHTTP(proxyResp http.ResponseWriter, proxyReq *http.Re
 	h.serveHTTPForward(proxyResp, proxyReq)
 }
 
-func (h *httpHandler) serveHTTPConnect(proxyResp http.ResponseWriter, proxyReq *http.Request) {
+func (h *proxyHandler) serveHTTPConnect(proxyResp http.ResponseWriter, proxyReq *http.Request) {
 	if proxyReq.Host == "" {
 		http.Error(proxyResp, "missing host", http.StatusBadRequest)
 		return
@@ -70,7 +70,7 @@ func (h *httpHandler) serveHTTPConnect(proxyResp http.ResponseWriter, proxyReq *
 	}
 }
 
-func (h *httpHandler) serveHTTPForward(proxyResp http.ResponseWriter, proxyReq *http.Request) {
+func (h *proxyHandler) serveHTTPForward(proxyResp http.ResponseWriter, proxyReq *http.Request) {
 	if proxyReq.Host == "" {
 		http.Error(proxyResp, "missing host", http.StatusBadRequest)
 		return
