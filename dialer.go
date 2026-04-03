@@ -79,7 +79,7 @@ func newDialerGroup(transports []ServerConfig, bypass, block string, urltest url
 	g.urltest = urltest
 	interval := urltest.Interval
 	if interval == 0 {
-		interval = 3
+		interval = 60
 	}
 	g.ticker = time.NewTicker(time.Duration(interval) * time.Second)
 	go func() {
