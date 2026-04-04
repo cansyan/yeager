@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -14,7 +13,6 @@ import (
 	"syscall"
 
 	"github.com/cansyan/yeager/logger"
-	"github.com/cansyan/yeager/transport"
 )
 
 func main() {
@@ -45,6 +43,17 @@ func main() {
 	}
 
 	var conf Config
+	if flags.config != "" {
+		bs, err := os.ReadFile(flags.config)
+		if err != nil {
+			logger.Error.Printf("read config: %s", err)
+			return
+		}
+		if err = json.Unmarshal(bs, &conf); err != nil {
+			logger.Error.Printf("load config: %s", err)
+			return
+		}
+	}
 	if flags.listen != "" {
 		s := strings.Split(flags.listen, ",")
 		conf.Listen = append(conf.Listen, s...)
@@ -69,37 +78,18 @@ func main() {
 		}
 		conf.Proxy = append(conf.Proxy, proxyConf)
 	}
-	if flags.config != "" {
-		bs, err := os.ReadFile(flags.config)
-		if err != nil {
-			logger.Error.Printf("read config: %s", err)
-			return
-		}
-		if err = json.Unmarshal(bs, &conf); err != nil {
-			logger.Error.Printf("load config: %s", err)
-			return
-		}
-	}
+
 	if len(conf.Listen) == 0 || len(conf.Proxy) == 0 {
 		logger.Error.Print("invalid config")
 		return
 	}
 
-	var dialer transport.Dialer
-	getDialer := func() (transport.Dialer, error) {
-		if dialer != nil {
-			return dialer, nil
-		}
-		if len(conf.Proxy) == 0 {
-			return nil, errors.New("missing transport config")
-		}
-		d, err := newDialerGroup(conf.Proxy, conf.Bypass, conf.Block, conf.URLTest)
-		if err != nil {
-			return nil, err
-		}
-		dialer = d
-		return dialer, nil
+	dialer, err := newDialerGroup(conf.Proxy, conf.Bypass, conf.Block, conf.URLTest)
+	if err != nil {
+		logger.Error.Printf("init dialer: %s", err)
+		return
 	}
+	defer dialer.Close()
 
 	for _, proxyURL := range conf.Listen {
 		u, err := url.Parse(proxyURL)
@@ -109,11 +99,6 @@ func main() {
 		}
 		switch u.Scheme {
 		case "http":
-			dialer, err := getDialer()
-			if err != nil {
-				logger.Error.Print(err)
-				return
-			}
 			listener, err := net.Listen("tcp", u.Host)
 			if err != nil {
 				logger.Error.Print(err)
@@ -128,11 +113,6 @@ func main() {
 			}()
 			defer s.Close()
 		case "socks5":
-			dialer, err := getDialer()
-			if err != nil {
-				logger.Error.Print(err)
-				return
-			}
 			listener, err := net.Listen("tcp", u.Host)
 			if err != nil {
 				logger.Error.Print(err)
