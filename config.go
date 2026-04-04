@@ -29,7 +29,7 @@ const (
 type ServerConfig struct {
 	Protocol string `json:"protocol,omitempty"`
 	Address  string `json:"address,omitempty"`
-	Cipher   string `json:"cipher,omitempty"`
+	Cipher   string `json:"cipher,omitempty"` // encrytion method
 	Secret   string `json:"secret,omitempty"`
 }
 

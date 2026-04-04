@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/cansyan/yeager/logger"
@@ -18,32 +20,66 @@ import (
 func main() {
 	var flags struct {
 		config  string
-		version bool
+		listen  string
+		proxy   string
 		verbose bool
+		help    bool
 	}
 	flag.StringVar(&flags.config, "c", "", "path to config file")
 	flag.BoolVar(&flags.verbose, "v", false, "verbose logging")
+	flag.StringVar(&flags.listen, "listen", "", "socks5 url")
+	flag.StringVar(&flags.proxy, "proxy", "", "ss://method:password@host:port")
+	flag.BoolVar(&flags.help, "help", false, "")
 	flag.Parse()
 
-	if flags.verbose {
-		logger.Debug.SetOutput(os.Stderr)
-	}
-
-	if flags.config == "" {
+	if flags.help {
 		flag.Usage()
 		return
 	}
-	bs, err := os.ReadFile(flags.config)
-	if err != nil {
-		logger.Error.Printf("read config: %s", err)
-		return
+	if flags.verbose {
+		logger.Debug.SetOutput(os.Stderr)
 	}
-	var conf Config
-	if err = json.Unmarshal(bs, &conf); err != nil {
-		logger.Error.Printf("load config: %s", err)
+	if flags.config == "" && flags.listen == "" {
+		flag.Usage()
 		return
 	}
 
+	var conf Config
+	if flags.listen != "" {
+		s := strings.Split(flags.listen, ",")
+		conf.Listen = append(conf.Listen, s...)
+	}
+	if flags.proxy != "" {
+		u, err := url.Parse(flags.proxy)
+		if err != nil {
+			fmt.Printf("parse proxy url: %s", err)
+			return
+		}
+
+		proxyConf := ServerConfig{
+			Protocol: u.Scheme,
+			Address:  u.Host,
+			Cipher:   u.User.Username(),
+		}
+		if pass, ok := u.User.Password(); !ok {
+			fmt.Printf("missing password")
+			return
+		} else {
+			proxyConf.Secret = pass
+		}
+		conf.Proxy = append(conf.Proxy, proxyConf)
+	}
+	if flags.config != "" {
+		bs, err := os.ReadFile(flags.config)
+		if err != nil {
+			logger.Error.Printf("read config: %s", err)
+			return
+		}
+		if err = json.Unmarshal(bs, &conf); err != nil {
+			logger.Error.Printf("load config: %s", err)
+			return
+		}
+	}
 	if len(conf.Listen) == 0 || len(conf.Proxy) == 0 {
 		logger.Error.Print("invalid config")
 		return
