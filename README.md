@@ -1,12 +1,12 @@
 # Yeager
 
-## Features
+Features:
 - local HTTP, SOCKS5 proxy server
 - multiple transports
 - automatically selects the best server by URL test
 - bypass or block hosts
 
-## Usage
+Usage:
 ```sh
 go build .
 ./yeager -listen=socks5://127.0.0.1:1080 -proxy=ss://method:password@host:port
