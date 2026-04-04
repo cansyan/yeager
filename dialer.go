@@ -53,7 +53,7 @@ type dialerGroup struct {
 // newDialerGroup returns a new stream dialer.
 // Given multiple transport config, it creates a dialer group to
 // perform periodic health checks and switch server if necessary.
-func newDialerGroup(transports []ServerConfig, bypass, block string, urltest urltest) (transport.Dialer, error) {
+func newDialerGroup(transports []ServerConfig, bypass, block string, urltest urltest) (*dialerGroup, error) {
 	if len(transports) == 0 {
 		return nil, errors.New("missing transport config")
 	}
@@ -65,33 +65,37 @@ func newDialerGroup(transports []ServerConfig, bypass, block string, urltest url
 	if bypass != "" {
 		g.bypass = parseHostMatcher(bypass)
 	}
+
 	if len(transports) == 1 {
 		d, err := newStreamDialer(transports[0])
 		if err != nil {
 			return nil, err
 		}
 		g.dialer = d
-		// only one server, no url test
 		return g, nil
 	}
 
 	g.transports = transports
 	g.urltest = urltest
+	if err := g.Select(); err != nil {
+		return nil, err
+	}
 	interval := urltest.Interval
 	if interval == 0 {
 		interval = 60
 	}
 	g.ticker = time.NewTicker(time.Duration(interval) * time.Second)
 	go func() {
-		g.Select()
 		for range g.ticker.C {
-			g.Select()
+			if err := g.Select(); err != nil {
+				logger.Error.Printf("select transport: %s", err)
+			}
 		}
 	}()
 	return g, nil
 }
 
-func (g *dialerGroup) Select() {
+func (g *dialerGroup) Select() error {
 	var winner transport.Dialer
 	var winnerCfg ServerConfig
 	var min time.Duration
@@ -127,22 +131,25 @@ func (g *dialerGroup) Select() {
 		logger.Debug.Printf("test connection through %s %dms", t.Address, du.Milliseconds())
 	}
 	if winner == nil {
-		logger.Error.Println("unable to find a valid transport")
-		return
+		return errors.New("unable to find a valid transport")
 	}
 
 	if g.best.Protocol == winnerCfg.Protocol && g.best.Address == winnerCfg.Address {
-		return
+		if v, ok := winner.(io.Closer); ok {
+			v.Close()
+		}
+		return nil
 	}
 
+	g.mu.Lock()
 	if v, ok := g.dialer.(io.Closer); ok {
 		v.Close()
 	}
-	g.mu.Lock()
 	g.dialer = winner
 	g.best = winnerCfg
 	g.mu.Unlock()
 	logger.Info.Printf("selected transport: %s %s", winnerCfg.Protocol, winnerCfg.Address)
+	return nil
 }
 
 // implements interface transport.StreamDialer
