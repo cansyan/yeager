@@ -112,21 +112,10 @@ func (g *dialerGroup) Select() error {
 			continue
 		}
 
-		if winner == nil {
+		if winner == nil || du < min {
 			min = du
 			winner = d
 			winnerCfg = t
-		} else if du < min {
-			if v, ok := winner.(io.Closer); ok {
-				v.Close()
-			}
-			min = du
-			winner = d
-			winnerCfg = t
-		} else {
-			if v, ok := d.(io.Closer); ok {
-				v.Close()
-			}
 		}
 		logger.Debug.Printf("test connection through %s %dms", t.Address, du.Milliseconds())
 	}
@@ -135,16 +124,10 @@ func (g *dialerGroup) Select() error {
 	}
 
 	if g.best.Protocol == winnerCfg.Protocol && g.best.Address == winnerCfg.Address {
-		if v, ok := winner.(io.Closer); ok {
-			v.Close()
-		}
 		return nil
 	}
 
 	g.mu.Lock()
-	if v, ok := g.dialer.(io.Closer); ok {
-		v.Close()
-	}
 	g.dialer = winner
 	g.best = winnerCfg
 	g.mu.Unlock()
