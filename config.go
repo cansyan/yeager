@@ -34,7 +34,8 @@ type ServerConfig struct {
 }
 
 type urltest struct {
-	Interval int    `json:"interval,omitempty"` // seconds
-	Timeout  int    `json:"timeout,omitempty"`  // seconds
-	URL      string `json:"url,omitempty"`
+	Interval  int    `json:"interval,omitempty"`  // seconds
+	Timeout   int    `json:"timeout,omitempty"`   // seconds
+	Tolerance int    `json:"tolerance,omitempty"` // milliseconds
+	URL       string `json:"url,omitempty"`
 }

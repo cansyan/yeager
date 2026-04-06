@@ -28,6 +28,7 @@ var _ transport.Dialer = (*dialer)(nil)
 
 // NewStreamDialer returns a new transport.StreamDialer that dials through the provided
 // proxy server's address.
+// The caller is responsible for closing the dialer when it's no longer needed.
 func NewStreamDialer(addr string, cfg *tls.Config, username, password string) *dialer {
 	d := &dialer{
 		proxyAddr: addr,
