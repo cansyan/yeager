@@ -96,16 +96,9 @@ func newDialerGroup(transports []ServerConfig, bypass, block string, urltest url
 }
 
 func (g *dialerGroup) Select() error {
-	g.mu.RLock()
-	currentBest := g.best
-	g.mu.RUnlock()
-
 	var winner transport.Dialer
 	var winnerCfg ServerConfig
 	var min time.Duration
-	var current transport.Dialer
-	var currentLatency time.Duration
-	tolerance := time.Duration(g.urltest.Tolerance) * time.Millisecond
 	for _, t := range g.transports {
 		d, err := newStreamDialer(t)
 		if err != nil {
@@ -119,15 +112,21 @@ func (g *dialerGroup) Select() error {
 			continue
 		}
 
-		if currentBest.Protocol == t.Protocol && currentBest.Address == t.Address {
-			current = d
-			currentLatency = du
-		}
-
-		if winner == nil || du < min {
+		if winner == nil {
 			min = du
 			winner = d
 			winnerCfg = t
+		} else if du < min {
+			if v, ok := winner.(io.Closer); ok {
+				v.Close()
+			}
+			min = du
+			winner = d
+			winnerCfg = t
+		} else {
+			if v, ok := d.(io.Closer); ok {
+				v.Close()
+			}
 		}
 		logger.Debug.Printf("test connection through %s %dms", t.Address, du.Milliseconds())
 	}
@@ -135,16 +134,21 @@ func (g *dialerGroup) Select() error {
 		return errors.New("unable to find a valid transport")
 	}
 
-	if current != nil && (current == winner || currentLatency <= min+tolerance) {
-		// current transport is still the best choice
+	if g.best.Protocol == winnerCfg.Protocol && g.best.Address == winnerCfg.Address {
+		if v, ok := winner.(io.Closer); ok {
+			v.Close()
+		}
 		return nil
 	}
 
 	g.mu.Lock()
+	if v, ok := g.dialer.(io.Closer); ok {
+		v.Close()
+	}
 	g.dialer = winner
 	g.best = winnerCfg
 	g.mu.Unlock()
-	logger.Info.Printf("selected transport: %s %s %dms", winnerCfg.Protocol, winnerCfg.Address, min.Milliseconds())
+	logger.Info.Printf("selected transport: %s %s", winnerCfg.Protocol, winnerCfg.Address)
 	return nil
 }
 
