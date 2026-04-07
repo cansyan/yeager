@@ -3,12 +3,11 @@ package http2
 import (
 	"crypto/subtle"
 	"crypto/tls"
+	"log"
 	"net"
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/cansyan/yeager/logger"
 )
 
 // NewServer starts a HTTP/2 Server for forward proxying.
@@ -31,7 +30,7 @@ func NewServer(addr string, cfg *tls.Config, username, password string) (*http.S
 	go func() {
 		err := s.Serve(lis)
 		if err != nil && err != http.ErrServerClosed {
-			logger.Error.Print(err)
+			log.Print(err)
 		}
 	}()
 	return s, nil
@@ -72,7 +71,7 @@ func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := net.DialTimeout("tcp", r.Host, 5*time.Second)
 	if err != nil {
-		logger.Error.Print(err)
+		log.Print(err)
 		return
 	}
 	defer conn.Close()

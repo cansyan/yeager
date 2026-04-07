@@ -7,9 +7,9 @@ package main
 import (
 	"bufio"
 	"io"
+	"log"
 	"net/http"
 
-	"github.com/cansyan/yeager/logger"
 	"github.com/cansyan/yeager/transport"
 )
 
@@ -43,7 +43,7 @@ func (h *proxyHandler) serveHTTPConnect(proxyResp http.ResponseWriter, proxyReq 
 	stream, err := h.dialer.DialContext(proxyReq.Context(), "tcp", proxyReq.Host)
 	if err != nil {
 		http.Error(proxyResp, "Failed to connect target", http.StatusServiceUnavailable)
-		logger.Error.Printf("connect %s: %s", proxyReq.Host, err)
+		log.Printf("connect %s: %s", proxyReq.Host, err)
 		return
 	}
 	defer stream.Close()
@@ -56,7 +56,7 @@ func (h *proxyHandler) serveHTTPConnect(proxyResp http.ResponseWriter, proxyReq 
 	proxyConn, _, err := hijacker.Hijack()
 	if err != nil {
 		http.Error(proxyResp, "Failed to hijack connection", http.StatusInternalServerError)
-		logger.Error.Print(err)
+		log.Print(err)
 		return
 	}
 	defer proxyConn.Close()
@@ -66,7 +66,7 @@ func (h *proxyHandler) serveHTTPConnect(proxyResp http.ResponseWriter, proxyReq 
 
 	err = transport.Relay(proxyConn, stream)
 	if err != nil {
-		logger.Debug.Printf("relay: %s", err)
+		debugf("relay: %s", err)
 	}
 }
 
@@ -82,7 +82,7 @@ func (h *proxyHandler) serveHTTPForward(proxyResp http.ResponseWriter, proxyReq 
 	targetConn, err := h.dialer.DialContext(proxyReq.Context(), "tcp", host)
 	if err != nil {
 		http.Error(proxyResp, "Failed to connect target", http.StatusServiceUnavailable)
-		logger.Error.Print(err)
+		log.Print(err)
 		return
 	}
 	defer targetConn.Close()
@@ -90,13 +90,13 @@ func (h *proxyHandler) serveHTTPForward(proxyResp http.ResponseWriter, proxyReq 
 	err = proxyReq.Write(targetConn)
 	if err != nil {
 		http.Error(proxyResp, "Failed to send request", http.StatusServiceUnavailable)
-		logger.Error.Print(err)
+		log.Print(err)
 		return
 	}
 	targetResp, err := http.ReadResponse(bufio.NewReader(targetConn), proxyReq)
 	if err != nil {
 		http.Error(proxyResp, "Failed to read target response", http.StatusServiceUnavailable)
-		logger.Error.Printf("read target response: %s", err)
+		log.Printf("read target response: %s", err)
 		return
 	}
 	defer targetResp.Body.Close()
@@ -108,7 +108,7 @@ func (h *proxyHandler) serveHTTPForward(proxyResp http.ResponseWriter, proxyReq 
 	}
 	_, err = io.Copy(proxyResp, targetResp.Body)
 	if err != nil {
-		logger.Error.Printf("write response: %s", err)
+		log.Printf("write response: %s", err)
 		return
 	}
 }

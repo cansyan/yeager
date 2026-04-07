@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/cansyan/yeager/logger"
 	"github.com/cansyan/yeager/transport"
 )
 
@@ -56,7 +56,7 @@ func (s *socks5Server) handleConn(proxyConn net.Conn) {
 	proxyConn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	addr, err := handshake(proxyConn)
 	if err != nil {
-		logger.Error.Printf("handshake: %s", err)
+		log.Printf("handshake: %s", err)
 		return
 	}
 	proxyConn.SetReadDeadline(time.Time{})
@@ -65,14 +65,14 @@ func (s *socks5Server) handleConn(proxyConn net.Conn) {
 	defer cancel()
 	stream, err := s.dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		logger.Error.Printf("connect %s: %s", addr, err)
+		log.Printf("connect %s: %s", addr, err)
 		return
 	}
 	defer stream.Close()
 
 	err = transport.Relay(proxyConn, stream)
 	if err != nil {
-		logger.Debug.Printf("relay: %s", err)
+		debugf("relay: %s", err)
 	}
 }
 

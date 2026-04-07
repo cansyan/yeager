@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -11,9 +12,16 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-
-	"github.com/cansyan/yeager/logger"
 )
+
+var verbose bool
+
+func debugf(format string, a ...any) {
+	if !verbose {
+		return
+	}
+	log.Default().Output(2, fmt.Sprintf(format, a...))
+}
 
 func main() {
 	var flags struct {
@@ -21,36 +29,29 @@ func main() {
 		listen  string
 		proxy   string
 		verbose bool
-		help    bool
 	}
-	flag.StringVar(&flags.config, "c", "", "path to config file")
-	flag.BoolVar(&flags.verbose, "v", false, "verbose logging")
-	flag.StringVar(&flags.listen, "listen", "", "socks5 url")
+	flag.StringVar(&flags.config, "c", "", "config file")
+	flag.BoolVar(&verbose, "v", false, "verbose logging")
+	flag.StringVar(&flags.listen, "listen", "", "socks5://host:port")
 	flag.StringVar(&flags.proxy, "proxy", "", "ss://method:password@host:port")
-	flag.BoolVar(&flags.help, "help", false, "")
 	flag.Parse()
 
-	if flags.help {
-		flag.Usage()
-		return
-	}
-	if flags.verbose {
-		logger.Debug.SetOutput(os.Stderr)
-	}
 	if flags.config == "" && flags.listen == "" {
 		flag.Usage()
 		return
 	}
 
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	var conf Config
 	if flags.config != "" {
 		bs, err := os.ReadFile(flags.config)
 		if err != nil {
-			logger.Error.Printf("read config: %s", err)
+			log.Printf("read config: %s", err)
 			return
 		}
 		if err = json.Unmarshal(bs, &conf); err != nil {
-			logger.Error.Printf("load config: %s", err)
+			log.Printf("load config: %s", err)
 			return
 		}
 	}
@@ -61,7 +62,7 @@ func main() {
 	if flags.proxy != "" {
 		u, err := url.Parse(flags.proxy)
 		if err != nil {
-			fmt.Printf("parse proxy url: %s", err)
+			log.Printf("parse proxy url: %s", err)
 			return
 		}
 
@@ -71,7 +72,7 @@ func main() {
 			Cipher:   u.User.Username(),
 		}
 		if pass, ok := u.User.Password(); !ok {
-			fmt.Printf("missing password")
+			log.Printf("missing password")
 			return
 		} else {
 			proxyConf.Secret = pass
@@ -80,13 +81,13 @@ func main() {
 	}
 
 	if len(conf.Listen) == 0 || len(conf.Proxy) == 0 {
-		logger.Error.Print("invalid config")
+		log.Print("invalid config")
 		return
 	}
 
 	dialer, err := newDialerGroup(conf.Proxy, conf.Bypass, conf.Block, conf.URLTest)
 	if err != nil {
-		logger.Error.Printf("init dialer: %s", err)
+		log.Printf("init dialer: %s", err)
 		return
 	}
 	defer dialer.Close()
@@ -94,47 +95,47 @@ func main() {
 	for _, proxyURL := range conf.Listen {
 		u, err := url.Parse(proxyURL)
 		if err != nil {
-			logger.Error.Print(err)
+			log.Print(err)
 			return
 		}
 		switch u.Scheme {
 		case "http":
 			listener, err := net.Listen("tcp", u.Host)
 			if err != nil {
-				logger.Error.Print(err)
+				log.Print(err)
 				return
 			}
 			s := &http.Server{Handler: NewProxyHandler(dialer)}
 			go func() {
 				err := s.Serve(listener)
 				if err != nil && err != http.ErrServerClosed {
-					logger.Error.Printf("serve http: %s", err)
+					log.Printf("serve http: %s", err)
 				}
 			}()
 			defer s.Close()
 		case "socks5":
 			listener, err := net.Listen("tcp", u.Host)
 			if err != nil {
-				logger.Error.Print(err)
+				log.Print(err)
 				return
 			}
 			s := NewSOCKS5Server(dialer)
 			go func() {
 				err := s.Serve(listener)
 				if err != nil {
-					logger.Error.Printf("serve socks5: %s", err)
+					log.Printf("serve socks5: %s", err)
 				}
 			}()
 			defer s.Close()
 		default:
-			logger.Error.Print("unsupported protocol: " + u.Scheme)
+			log.Print("unsupported protocol: " + u.Scheme)
 			return
 		}
-		logger.Info.Printf("listen %s", proxyURL)
+		log.Printf("listen %s", proxyURL)
 	}
 
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
 	sig := <-ch
-	logger.Info.Printf("received %s", sig)
+	log.Printf("received %s", sig)
 }

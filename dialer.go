@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/cansyan/yeager/logger"
 	"github.com/cansyan/yeager/transport"
 	"github.com/cansyan/yeager/transport/shadowsocks"
 	"github.com/cansyan/yeager/transport/vmess"
@@ -88,7 +88,7 @@ func newDialerGroup(transports []ServerConfig, bypass, block string, urltest url
 	go func() {
 		for range g.ticker.C {
 			if err := g.Select(); err != nil {
-				logger.Error.Printf("select transport: %s", err)
+				log.Printf("select transport: %s", err)
 			}
 		}
 	}()
@@ -102,13 +102,13 @@ func (g *dialerGroup) Select() error {
 	for _, t := range g.transports {
 		d, err := newStreamDialer(t)
 		if err != nil {
-			logger.Error.Printf("new stream dialer: %s", err)
+			log.Printf("new stream dialer: %s", err)
 			continue
 		}
 
 		du, err := testURL(d, g.urltest.URL, time.Duration(g.urltest.Timeout)*time.Second)
 		if err != nil {
-			logger.Debug.Printf("url test %s: %s", t.Address, err)
+			debugf("url test %s: %s", t.Address, err)
 			continue
 		}
 
@@ -117,7 +117,7 @@ func (g *dialerGroup) Select() error {
 			winner = d
 			winnerCfg = t
 		}
-		logger.Debug.Printf("url test %s %dms", t.Address, du.Milliseconds())
+		debugf("url test %s %dms", t.Address, du.Milliseconds())
 	}
 	if winner == nil {
 		return errors.New("unable to find a valid transport")
@@ -131,7 +131,7 @@ func (g *dialerGroup) Select() error {
 	g.dialer = winner
 	g.best = winnerCfg
 	g.mu.Unlock()
-	logger.Info.Printf("selected transport: %s %s", winnerCfg.Protocol, winnerCfg.Address)
+	log.Printf("selected transport: %s %s", winnerCfg.Protocol, winnerCfg.Address)
 	return nil
 }
 
@@ -149,7 +149,7 @@ func (g *dialerGroup) DialContext(ctx context.Context, network, address string) 
 		if err != nil {
 			return nil, err
 		}
-		logger.Debug.Printf("bypass %s", address)
+		debugf("bypass %s", address)
 		return conn.(*net.TCPConn), nil
 	}
 	if g.dialer == nil {
@@ -159,7 +159,7 @@ func (g *dialerGroup) DialContext(ctx context.Context, network, address string) 
 	if err != nil {
 		return nil, err
 	}
-	logger.Debug.Printf("connected to %s", address)
+	debugf("connected to %s", address)
 	return stream, nil
 }
 
