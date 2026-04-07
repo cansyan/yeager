@@ -108,7 +108,7 @@ func (g *dialerGroup) Select() error {
 
 		du, err := testURL(d, g.urltest.URL, time.Duration(g.urltest.Timeout)*time.Second)
 		if err != nil {
-			logger.Debug.Printf("test connection through %s: %s", t.Address, err)
+			logger.Debug.Printf("url test %s: %s", t.Address, err)
 			continue
 		}
 
@@ -117,7 +117,7 @@ func (g *dialerGroup) Select() error {
 			winner = d
 			winnerCfg = t
 		}
-		logger.Debug.Printf("test connection through %s %dms", t.Address, du.Milliseconds())
+		logger.Debug.Printf("url test %s %dms", t.Address, du.Milliseconds())
 	}
 	if winner == nil {
 		return errors.New("unable to find a valid transport")
@@ -149,7 +149,7 @@ func (g *dialerGroup) DialContext(ctx context.Context, network, address string) 
 		if err != nil {
 			return nil, err
 		}
-		logger.Debug.Printf("connected to %s, bypass proxy", address)
+		logger.Debug.Printf("bypass %s", address)
 		return conn.(*net.TCPConn), nil
 	}
 	if g.dialer == nil {
