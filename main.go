@@ -25,14 +25,13 @@ func debugf(format string, a ...any) {
 
 func main() {
 	var flags struct {
-		config  string
-		listen  string
-		proxy   string
-		verbose bool
+		config string
+		listen string
+		proxy  string
 	}
 	flag.StringVar(&flags.config, "c", "", "config file")
 	flag.BoolVar(&verbose, "v", false, "verbose logging")
-	flag.StringVar(&flags.listen, "listen", "", "socks5://host:port")
+	flag.StringVar(&flags.listen, "listen", "", "socks://host:port")
 	flag.StringVar(&flags.proxy, "proxy", "", "ss://method:password@host:port")
 	flag.Parse()
 
@@ -113,17 +112,17 @@ func main() {
 				}
 			}()
 			defer s.Close()
-		case "socks5":
+		case "socks":
 			listener, err := net.Listen("tcp", u.Host)
 			if err != nil {
 				log.Print(err)
 				return
 			}
-			s := NewSOCKS5Server(dialer)
+			s := NewSOCKSServer(dialer)
 			go func() {
 				err := s.Serve(listener)
 				if err != nil {
-					log.Printf("serve socks5: %s", err)
+					log.Printf("serve socks: %s", err)
 				}
 			}()
 			defer s.Close()

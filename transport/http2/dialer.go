@@ -13,8 +13,6 @@ import (
 	"os"
 	"sync"
 	"time"
-
-	"github.com/cansyan/yeager/transport"
 )
 
 type dialer struct {
@@ -24,11 +22,9 @@ type dialer struct {
 	client    *http.Client
 }
 
-var _ transport.Dialer = (*dialer)(nil)
-
 // NewStreamDialer returns a new transport.StreamDialer that dials through the provided
 // proxy server's address.
-// The caller is responsible for closing the dialer when it's no longer needed.
+// Caller should call Close when finished.
 func NewStreamDialer(addr string, cfg *tls.Config, username, password string) *dialer {
 	d := &dialer{
 		proxyAddr: addr,

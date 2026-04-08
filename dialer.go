@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -243,7 +244,6 @@ func (h *hostMatcher) match(addr string) bool {
 	return false
 }
 
-// matcher represents the matching rule for a given value in the NO_PROXY list
 type matcher interface {
 	// match returns true if the host or ip are allowed
 	match(host string, ip net.IP) bool
@@ -312,4 +312,40 @@ func testURL(d transport.Dialer, url string, timeout time.Duration) (time.Durati
 	}
 	io.Copy(io.Discard, resp.Body)
 	return elapsed, nil
+}
+
+type closeWriter interface {
+	CloseWrite() error
+}
+
+// relay copies data between streams bidirectionally
+func relay(a, b net.Conn) error {
+	wait := 5 * time.Second
+	errc := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(a, b)
+		// unblock read on a
+		if i, ok := a.(closeWriter); ok {
+			i.CloseWrite()
+		} else {
+			a.SetReadDeadline(time.Now().Add(wait))
+		}
+		errc <- err
+	}()
+	_, err := io.Copy(b, a)
+	// unblock read on b
+	if i, ok := b.(closeWriter); ok {
+		i.CloseWrite()
+	} else {
+		b.SetReadDeadline(time.Now().Add(wait))
+	}
+	err2 := <-errc
+
+	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
+		return err
+	}
+	if err2 != nil && !errors.Is(err2, os.ErrDeadlineExceeded) {
+		return err2
+	}
+	return nil
 }

@@ -1,7 +1,7 @@
 package main
 
 type Config struct {
-	Listen []string       `json:"listen,omitempty"` // local http or socks5 proxy
+	Listen []string       `json:"listen,omitempty"` // local http or socks proxy
 	Proxy  []ServerConfig `json:"proxy,omitempty"`  // remote proxy server
 
 	// Bypass specifies a string that contains comma-separated values

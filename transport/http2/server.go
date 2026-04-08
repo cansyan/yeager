@@ -11,7 +11,7 @@ import (
 )
 
 // NewServer starts a HTTP/2 Server for forward proxying.
-// The caller should call Close when finished.
+// Caller should call Close when finished.
 func NewServer(addr string, cfg *tls.Config, username, password string) (*http.Server, error) {
 	cfg.NextProtos = []string{"h2"}
 	lis, err := tls.Listen("tcp", addr, cfg)

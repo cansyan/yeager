@@ -64,8 +64,7 @@ func (h *proxyHandler) serveHTTPConnect(proxyResp http.ResponseWriter, proxyReq 
 	// inform the client
 	proxyConn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
 
-	err = transport.Relay(proxyConn, stream)
-	if err != nil {
+	if err = relay(proxyConn, stream); err != nil {
 		debugf("relay: %s", err)
 	}
 }
