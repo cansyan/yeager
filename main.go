@@ -59,24 +59,7 @@ func main() {
 		conf.Listen = append(conf.Listen, s...)
 	}
 	if flags.proxy != "" {
-		u, err := url.Parse(flags.proxy)
-		if err != nil {
-			log.Printf("parse proxy url: %s", err)
-			return
-		}
-
-		proxyConf := ServerConfig{
-			Protocol: u.Scheme,
-			Address:  u.Host,
-			Cipher:   u.User.Username(),
-		}
-		if pass, ok := u.User.Password(); !ok {
-			log.Printf("missing password")
-			return
-		} else {
-			proxyConf.Secret = pass
-		}
-		conf.Proxy = append(conf.Proxy, proxyConf)
+		conf.Proxy = append(conf.Proxy, flags.proxy)
 	}
 
 	if len(conf.Listen) == 0 || len(conf.Proxy) == 0 {
@@ -84,7 +67,33 @@ func main() {
 		return
 	}
 
-	dialer, err := newDialerGroup(conf.Proxy, conf.Bypass, conf.Block, conf.URLTest)
+	proxyUrls := make([]*url.URL, 0, len(conf.Proxy))
+	for _, proxyURL := range conf.Proxy {
+		u, err := url.Parse(proxyURL)
+		if err != nil {
+			log.Printf("invalid proxy url: %s", err)
+			return
+		}
+		if u.Scheme != ProtoShadowsocks && u.Scheme != ProtoVMess {
+			log.Printf("unsupported proxy protocol: %s", u.Scheme)
+			return
+		}
+		if u.Host == "" {
+			log.Printf("missing proxy address: %s", proxyURL)
+			return
+		}
+		if u.User == nil {
+			log.Printf("missing proxy credentials: %s", proxyURL)
+			return
+		}
+		if _, ok := u.User.Password(); !ok {
+			log.Printf("missing proxy password: %s", proxyURL)
+			return
+		}
+		proxyUrls = append(proxyUrls, u)
+	}
+
+	dialer, err := newDialerGroup(proxyUrls, conf.Bypass, conf.Block, conf.URLTest)
 	if err != nil {
 		log.Printf("init dialer: %s", err)
 		return

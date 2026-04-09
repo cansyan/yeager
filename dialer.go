@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -17,34 +18,39 @@ import (
 	"github.com/cansyan/yeager/transport/vmess"
 )
 
-func newStreamDialer(c ServerConfig) (transport.Dialer, error) {
+func newProxyDialer(u *url.URL) (transport.Dialer, error) {
+	if u.Host == "" || u.User == nil {
+		return nil, errors.New("invalid proxy url")
+	}
+	pass, _ := u.User.Password()
+
 	var dialer transport.Dialer
-	switch c.Protocol {
+	switch u.Scheme {
 	case ProtoShadowsocks:
-		d, err := shadowsocks.NewDialer(c.Address, c.Cipher, c.Secret)
+		d, err := shadowsocks.NewDialer(u.Host, u.User.Username(), pass)
 		if err != nil {
 			return nil, err
 		}
 		dialer = d
 	case ProtoVMess:
-		d, err := vmess.NewDialer(c.Address, c.Secret, c.Cipher, 0)
+		d, err := vmess.NewDialer(u.Host, pass, u.User.Username(), 0)
 		if err != nil {
 			return nil, err
 		}
 		dialer = d
 	default:
-		return nil, errors.New("unsupported protocol: " + c.Protocol)
+		return nil, errors.New("unsupported protocol: " + u.Scheme)
 	}
 	return dialer, nil
 }
 
 type dialerGroup struct {
-	transports []ServerConfig
+	proxies []*url.URL
 
-	mu     sync.RWMutex
-	ticker *time.Ticker
-	best   ServerConfig
-	dialer transport.Dialer
+	mu         sync.RWMutex
+	ticker     *time.Ticker
+	selectedID string
+	dialer     transport.Dialer
 
 	bypass  *hostMatcher
 	block   *hostMatcher
@@ -54,9 +60,9 @@ type dialerGroup struct {
 // newDialerGroup returns a new stream dialer.
 // Given multiple transport config, it creates a dialer group to
 // perform periodic health checks and switch server if necessary.
-func newDialerGroup(transports []ServerConfig, bypass, block string, urltest urltest) (*dialerGroup, error) {
-	if len(transports) == 0 {
-		return nil, errors.New("missing transport config")
+func newDialerGroup(proxies []*url.URL, bypass, block string, urltest urltest) (*dialerGroup, error) {
+	if len(proxies) == 0 {
+		return nil, errors.New("missing proxy config")
 	}
 
 	g := new(dialerGroup)
@@ -67,8 +73,8 @@ func newDialerGroup(transports []ServerConfig, bypass, block string, urltest url
 		g.bypass = parseHostMatcher(bypass)
 	}
 
-	if len(transports) == 1 {
-		d, err := newStreamDialer(transports[0])
+	if len(proxies) == 1 {
+		d, err := newProxyDialer(proxies[0])
 		if err != nil {
 			return nil, err
 		}
@@ -76,7 +82,7 @@ func newDialerGroup(transports []ServerConfig, bypass, block string, urltest url
 		return g, nil
 	}
 
-	g.transports = transports
+	g.proxies = proxies
 	g.urltest = urltest
 	if err := g.Select(); err != nil {
 		return nil, err
@@ -98,41 +104,41 @@ func newDialerGroup(transports []ServerConfig, bypass, block string, urltest url
 
 func (g *dialerGroup) Select() error {
 	var winner transport.Dialer
-	var winnerCfg ServerConfig
-	var min time.Duration
-	for _, t := range g.transports {
-		d, err := newStreamDialer(t)
+	var winnerURL *url.URL
+	var latency time.Duration
+	for _, pu := range g.proxies {
+		d, err := newProxyDialer(pu)
 		if err != nil {
-			log.Printf("new stream dialer: %s", err)
+			log.Print(err)
 			continue
 		}
 
-		du, err := testURL(d, g.urltest.URL, time.Duration(g.urltest.Timeout)*time.Second)
+		duration, err := testURL(d, g.urltest.URL, time.Duration(g.urltest.Timeout)*time.Second)
 		if err != nil {
-			debugf("url test %s: %s", t.Address, err)
+			debugf("url test %s: %s", pu.Host, err)
 			continue
 		}
 
-		if winner == nil || du < min {
-			min = du
+		if winner == nil || duration < latency {
+			latency = duration
 			winner = d
-			winnerCfg = t
+			winnerURL = pu
 		}
-		debugf("url test %s %dms", t.Address, du.Milliseconds())
+		debugf("url test %s %dms", pu.Host, duration.Milliseconds())
 	}
 	if winner == nil {
-		return errors.New("unable to find a valid transport")
+		return errors.New("unable to find a valid server")
 	}
 
-	if g.best.Protocol == winnerCfg.Protocol && g.best.Address == winnerCfg.Address {
+	if g.selectedID == winnerURL.String() {
 		return nil
 	}
 
 	g.mu.Lock()
 	g.dialer = winner
-	g.best = winnerCfg
+	g.selectedID = winnerURL.String()
 	g.mu.Unlock()
-	log.Printf("selected transport: %s %s", winnerCfg.Protocol, winnerCfg.Address)
+	log.Printf("select server: %s", winnerURL.Host)
 	return nil
 }
 

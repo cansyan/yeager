@@ -1,8 +1,15 @@
 package main
 
 type Config struct {
-	Listen []string       `json:"listen,omitempty"` // local http or socks proxy
-	Proxy  []ServerConfig `json:"proxy,omitempty"`  // remote proxy server
+	// listen url, for example:
+	//   socks://127.0.0.1:1080
+	//   http://127.0.0.1:8080
+	Listen []string `json:"listen,omitempty"`
+
+	// proxy url, for example:
+	//   ss://method:password@host:port
+	//   vmess://security:uuid@host:port
+	Proxy []string `json:"proxy,omitempty"`
 
 	// Bypass specifies a string that contains comma-separated values
 	// specifying hosts that should be excluded from proxying. Each value is
@@ -25,13 +32,6 @@ const (
 	ProtoShadowsocks = "ss"
 	ProtoVMess       = "vmess"
 )
-
-type ServerConfig struct {
-	Protocol string `json:"protocol,omitempty"`
-	Address  string `json:"address,omitempty"`
-	Cipher   string `json:"cipher,omitempty"` // encrytion method
-	Secret   string `json:"secret,omitempty"`
-}
 
 type urltest struct {
 	Interval int    `json:"interval,omitempty"` // seconds
