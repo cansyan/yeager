@@ -133,31 +133,27 @@ func (g *dialerGroup) Select() error {
 }
 
 // implements interface transport.StreamDialer
-func (g *dialerGroup) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+func (g *dialerGroup) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	if g.block != nil && g.block.match(address) {
+	if g.block != nil && g.block.match(addr) {
 		return nil, errors.New("blocked host")
 	}
-	if g.bypass != nil && g.bypass.match(address) {
+	if g.bypass != nil && g.bypass.match(addr) {
 		var d net.Dialer
-		conn, err := d.DialContext(ctx, "tcp", address)
+		conn, err := d.DialContext(ctx, network, addr)
 		if err != nil {
 			return nil, err
 		}
-		debugf("bypass %s", address)
-		return conn.(*net.TCPConn), nil
+		debugf("bypass %s", addr)
+		return conn, nil
 	}
 	if g.dialer == nil {
 		return nil, errors.New("no valid dialer")
 	}
-	stream, err := g.dialer.DialContext(ctx, "tcp", address)
-	if err != nil {
-		return nil, err
-	}
-	debugf("connected to %s", address)
-	return stream, nil
+	debugf("connect to %s", addr)
+	return g.dialer.DialContext(ctx, network, addr)
 }
 
 func (g *dialerGroup) Close() error {
