@@ -18,30 +18,20 @@ import (
 	"github.com/cansyan/yeager/transport/vmess"
 )
 
-func newProxyDialer(u *url.URL) (transport.Dialer, error) {
+func newDialer(u *url.URL) (transport.Dialer, error) {
 	if u.Host == "" || u.User == nil {
 		return nil, errors.New("invalid proxy url")
 	}
 	pass, _ := u.User.Password()
 
-	var dialer transport.Dialer
 	switch u.Scheme {
 	case ProtoShadowsocks:
-		d, err := shadowsocks.NewDialer(u.Host, u.User.Username(), pass)
-		if err != nil {
-			return nil, err
-		}
-		dialer = d
+		return shadowsocks.NewDialer(u.Host, u.User.Username(), pass)
 	case ProtoVMess:
-		d, err := vmess.NewDialer(u.Host, pass, u.User.Username(), 0)
-		if err != nil {
-			return nil, err
-		}
-		dialer = d
+		return vmess.NewDialer(u.Host, pass, u.User.Username(), 0)
 	default:
 		return nil, errors.New("unsupported protocol: " + u.Scheme)
 	}
-	return dialer, nil
 }
 
 type dialerGroup struct {
@@ -74,7 +64,7 @@ func newDialerGroup(proxies []*url.URL, bypass, block string, urltest urltest) (
 	}
 
 	if len(proxies) == 1 {
-		d, err := newProxyDialer(proxies[0])
+		d, err := newDialer(proxies[0])
 		if err != nil {
 			return nil, err
 		}
@@ -107,7 +97,7 @@ func (g *dialerGroup) Select() error {
 	var winnerURL *url.URL
 	var latency time.Duration
 	for _, pu := range g.proxies {
-		d, err := newProxyDialer(pu)
+		d, err := newDialer(pu)
 		if err != nil {
 			log.Print(err)
 			continue
@@ -148,7 +138,7 @@ func (g *dialerGroup) DialContext(ctx context.Context, network, address string) 
 	defer g.mu.RUnlock()
 
 	if g.block != nil && g.block.match(address) {
-		return nil, errors.New("host was blocked")
+		return nil, errors.New("blocked host")
 	}
 	if g.bypass != nil && g.bypass.match(address) {
 		var d net.Dialer
