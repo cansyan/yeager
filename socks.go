@@ -36,31 +36,27 @@ func (s *socksServer) Serve(lis net.Listener) error {
 			return err
 		}
 
-		go s.handle(conn)
-	}
-}
+		go func(conn net.Conn) {
+			defer conn.Close()
+			addr, err := socks.Handshake(conn)
+			if err != nil {
+				log.Printf("handshake: %s", err)
+				return
+			}
 
-func (s *socksServer) handle(conn net.Conn) {
-	defer conn.Close()
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	addr, err := socks.Handshake(conn)
-	if err != nil {
-		log.Printf("handshake: %s", err)
-		return
-	}
-	conn.SetReadDeadline(time.Time{})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			stream, err := s.dialer.DialContext(ctx, "tcp", addr.String())
+			if err != nil {
+				log.Printf("connect %s: %s", addr, err)
+				return
+			}
+			defer stream.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	stream, err := s.dialer.DialContext(ctx, "tcp", addr.String())
-	if err != nil {
-		log.Printf("connect %s: %s", addr, err)
-		return
-	}
-	defer stream.Close()
-
-	if err = relay(conn, stream); err != nil {
-		debugf("relay: %s", err)
+			if err = relay(conn, stream); err != nil {
+				debugf("relay: %s", err)
+			}
+		}(conn)
 	}
 }
 
