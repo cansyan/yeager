@@ -16,40 +16,52 @@ import (
 	"github.com/cansyan/yeager/transport"
 	"github.com/cansyan/yeager/transport/shadowsocks"
 	"github.com/cansyan/yeager/transport/vmess"
+	"golang.org/x/net/proxy"
 )
 
-func newDialer(u *url.URL) (transport.Dialer, error) {
-	if u.Host == "" || u.User == nil {
-		return nil, errors.New("invalid proxy url")
-	}
-	pass, _ := u.User.Password()
-
+// newDialer creates a transport.ContextDialer from the given proxy URL.
+func newDialer(u *url.URL) (transport.ContextDialer, error) {
 	switch u.Scheme {
-	case ProtoShadowsocks:
+	case "ss":
+		if u.User == nil {
+			return nil, errors.New("missing credential")
+		}
+		pass, _ := u.User.Password()
 		return shadowsocks.NewDialer(u.Host, u.User.Username(), pass)
-	case ProtoVMess:
+	case "vmess":
+		if u.User == nil {
+			return nil, errors.New("missing credential")
+		}
+		pass, _ := u.User.Password()
 		return vmess.NewDialer(u.Host, pass, u.User.Username(), 0)
-	default:
-		return nil, errors.New("unsupported protocol: " + u.Scheme)
+	case "socks5":
+		// Reuse the standard SOCKS5 dialer so yeager can interoperate with
+		// existing SOCKS5-compatible proxies, including naiveproxy.
+		d, err := proxy.FromURL(u, nil)
+		if err != nil {
+			return nil, err
+		}
+		if cd, ok := d.(transport.ContextDialer); ok {
+			return cd, nil
+		}
 	}
+	return nil, errors.New("unknown proxy url: " + u.String())
 }
 
+// dialerGroup implements transport.ContextDialer and performs periodic health checks on multiple dialers.
 type dialerGroup struct {
 	proxies []*url.URL
 
 	mu         sync.RWMutex
 	ticker     *time.Ticker
 	selectedID string
-	dialer     transport.Dialer
+	dialer     transport.ContextDialer
 
 	bypass  *hostMatcher
 	block   *hostMatcher
 	urltest urltest
 }
 
-// newDialerGroup returns a new stream dialer.
-// Given multiple transport config, it creates a dialer group to
-// perform periodic health checks and switch server if necessary.
 func newDialerGroup(proxies []*url.URL, bypass, block string, urltest urltest) (*dialerGroup, error) {
 	if len(proxies) == 0 {
 		return nil, errors.New("missing proxy config")
@@ -93,7 +105,7 @@ func newDialerGroup(proxies []*url.URL, bypass, block string, urltest urltest) (
 }
 
 func (g *dialerGroup) Select() error {
-	var winner transport.Dialer
+	var winner transport.ContextDialer
 	var winnerURL *url.URL
 	var latency time.Duration
 	for _, pu := range g.proxies {
@@ -278,7 +290,7 @@ func (m domainMatch) match(host string, ip net.IP) bool {
 	return before == "" || before[len(before)-1] == '.'
 }
 
-func testURL(d transport.Dialer, url string, timeout time.Duration) (time.Duration, error) {
+func testURL(d transport.ContextDialer, url string, timeout time.Duration) (time.Duration, error) {
 	if url == "" {
 		url = "http://www.gstatic.com/generate_204"
 	}

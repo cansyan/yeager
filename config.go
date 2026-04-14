@@ -9,6 +9,7 @@ type Config struct {
 	// proxy url, for example:
 	//   ss://method:password@host:port
 	//   vmess://security:uuid@host:port
+	//   socks5://localhost:port
 	Proxy []string `json:"proxy,omitempty"`
 
 	// Bypass specifies a string that contains comma-separated values
@@ -27,11 +28,6 @@ type Config struct {
 
 	URLTest urltest `json:"urltest,omitempty"`
 }
-
-const (
-	ProtoShadowsocks = "ss"
-	ProtoVMess       = "vmess"
-)
 
 type urltest struct {
 	Interval int    `json:"interval,omitempty"` // seconds

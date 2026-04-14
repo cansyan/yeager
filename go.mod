@@ -5,6 +5,7 @@ go 1.21
 require (
 	github.com/Jigsaw-Code/outline-sdk v0.0.15
 	github.com/sagernet/sing v0.6.11
+	golang.org/x/net v0.21.0
 )
 
 require github.com/gofrs/uuid/v5 v5.3.2 // indirect

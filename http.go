@@ -14,12 +14,12 @@ import (
 )
 
 type proxyHandler struct {
-	dialer transport.Dialer
+	dialer transport.ContextDialer
 }
 
 // NewProxyHandler creates a http.Handler that acts as a web proxy
 // to reach the destination using the given dialer.
-func NewProxyHandler(dialer transport.Dialer) *proxyHandler {
+func NewProxyHandler(dialer transport.ContextDialer) *proxyHandler {
 	return &proxyHandler{dialer: dialer}
 }
 

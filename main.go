@@ -74,20 +74,8 @@ func main() {
 			log.Printf("invalid proxy url: %s", err)
 			return
 		}
-		if u.Scheme != ProtoShadowsocks && u.Scheme != ProtoVMess {
-			log.Printf("unsupported proxy protocol: %s", u.Scheme)
-			return
-		}
 		if u.Host == "" {
 			log.Printf("missing proxy address: %s", proxyURL)
-			return
-		}
-		if u.User == nil {
-			log.Printf("missing proxy credentials: %s", proxyURL)
-			return
-		}
-		if _, ok := u.User.Password(); !ok {
-			log.Printf("missing proxy password: %s", proxyURL)
 			return
 		}
 		proxyUrls = append(proxyUrls, u)
@@ -121,7 +109,7 @@ func main() {
 				}
 			}()
 			defer s.Close()
-		case "socks":
+		case "socks", "socks5":
 			listener, err := net.Listen("tcp", u.Host)
 			if err != nil {
 				log.Print(err)

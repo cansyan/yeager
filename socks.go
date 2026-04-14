@@ -13,13 +13,13 @@ import (
 
 type socksServer struct {
 	lis    net.Listener
-	dialer transport.Dialer
+	dialer transport.ContextDialer
 }
 
 // NewSOCKSServer returns a new SOCKS5 proxy server that intends
 // to be a local proxy and does not require authentication.
 // Caller should call Close when finished.
-func NewSOCKSServer(dialer transport.Dialer) *socksServer {
+func NewSOCKSServer(dialer transport.ContextDialer) *socksServer {
 	return &socksServer{dialer: dialer}
 }
 
