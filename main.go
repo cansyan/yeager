@@ -81,7 +81,7 @@ func main() {
 		proxyUrls = append(proxyUrls, u)
 	}
 
-	dialer, err := newDialerGroup(proxyUrls, conf.Bypass, conf.Block, conf.URLTest)
+	dialer, err := newProxyGroup(proxyUrls, conf.Bypass, conf.Block, conf.Probe)
 	if err != nil {
 		log.Printf("init dialer: %s", err)
 		return

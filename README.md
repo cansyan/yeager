@@ -1,7 +1,7 @@
 # Yeager
 
 Features:
-- multiple transports, automatically selects the best server by URL test
+- multiple transports, automatically switch server based on latency
 - bypass or block hosts
 
 Usage:

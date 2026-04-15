@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -48,8 +47,8 @@ func newDialer(u *url.URL) (transport.ContextDialer, error) {
 	return nil, errors.New("unknown proxy url: " + u.String())
 }
 
-// dialerGroup implements transport.ContextDialer and performs periodic health checks on multiple dialers.
-type dialerGroup struct {
+// proxyGroup implements transport.ContextDialer and performs periodic health checks.
+type proxyGroup struct {
 	proxies []*url.URL
 
 	mu         sync.RWMutex
@@ -57,17 +56,16 @@ type dialerGroup struct {
 	selectedID string
 	dialer     transport.ContextDialer
 
-	bypass  *hostMatcher
-	block   *hostMatcher
-	urltest urltest
+	bypass *hostMatcher
+	block  *hostMatcher
 }
 
-func newDialerGroup(proxies []*url.URL, bypass, block string, urltest urltest) (*dialerGroup, error) {
+func newProxyGroup(proxies []*url.URL, bypass, block string, probe probe) (*proxyGroup, error) {
 	if len(proxies) == 0 {
 		return nil, errors.New("missing proxy config")
 	}
 
-	g := new(dialerGroup)
+	g := new(proxyGroup)
 	if block != "" {
 		g.block = parseHostMatcher(block)
 	}
@@ -85,11 +83,10 @@ func newDialerGroup(proxies []*url.URL, bypass, block string, urltest urltest) (
 	}
 
 	g.proxies = proxies
-	g.urltest = urltest
 	if err := g.Select(); err != nil {
 		return nil, err
 	}
-	interval := urltest.Interval
+	interval := probe.Interval
 	if interval == 0 {
 		interval = 60
 	}
@@ -104,7 +101,7 @@ func newDialerGroup(proxies []*url.URL, bypass, block string, urltest urltest) (
 	return g, nil
 }
 
-func (g *dialerGroup) Select() error {
+func (g *proxyGroup) Select() error {
 	var winner transport.ContextDialer
 	var winnerURL *url.URL
 	var latency time.Duration
@@ -115,18 +112,21 @@ func (g *dialerGroup) Select() error {
 			continue
 		}
 
-		duration, err := testURL(d, g.urltest.URL, time.Duration(g.urltest.Timeout)*time.Second)
+		start := time.Now()
+		conn, err := net.DialTimeout("tcp", pu.Host, time.Second)
 		if err != nil {
-			debugf("url test %s: %s", pu.Host, err)
+			debugf("probe %s: %s", pu.Host, err)
 			continue
 		}
+		conn.Close()
+		duration := time.Since(start)
 
-		if winner == nil || duration < latency {
+		if latency == 0 || duration < latency {
 			latency = duration
 			winner = d
 			winnerURL = pu
 		}
-		debugf("url test %s %dms", pu.Host, duration.Milliseconds())
+		debugf("probe %s %dms", pu.Host, duration.Milliseconds())
 	}
 	if winner == nil {
 		return errors.New("unable to find a valid server")
@@ -145,7 +145,7 @@ func (g *dialerGroup) Select() error {
 }
 
 // implements interface transport.StreamDialer
-func (g *dialerGroup) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+func (g *proxyGroup) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
@@ -161,14 +161,11 @@ func (g *dialerGroup) DialContext(ctx context.Context, network, addr string) (ne
 		debugf("bypass %s", addr)
 		return conn, nil
 	}
-	if g.dialer == nil {
-		return nil, errors.New("no valid dialer")
-	}
 	debugf("connect to %s", addr)
 	return g.dialer.DialContext(ctx, network, addr)
 }
 
-func (g *dialerGroup) Close() error {
+func (g *proxyGroup) Close() error {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	if g.ticker != nil {
@@ -288,34 +285,6 @@ func (m domainMatch) match(host string, ip net.IP) bool {
 		return false
 	}
 	return before == "" || before[len(before)-1] == '.'
-}
-
-func testURL(d transport.ContextDialer, url string, timeout time.Duration) (time.Duration, error) {
-	if url == "" {
-		url = "http://www.gstatic.com/generate_204"
-	}
-	if timeout == 0 {
-		timeout = 3 * time.Second
-	}
-
-	client := &http.Client{
-		Transport: &http.Transport{DialContext: d.DialContext},
-		Timeout:   timeout,
-	}
-	defer client.CloseIdleConnections()
-	start := time.Now()
-
-	resp, err := client.Get(url)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-	elapsed := time.Since(start)
-	if resp.StatusCode != http.StatusNoContent {
-		return 0, errors.New("unexpected status code: " + resp.Status)
-	}
-	io.Copy(io.Discard, resp.Body)
-	return elapsed, nil
 }
 
 type closeWriter interface {
