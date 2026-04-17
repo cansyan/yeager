@@ -83,7 +83,7 @@ func newProxyGroup(proxies []*url.URL, bypass, block string, probe probe) (*prox
 	}
 
 	g.proxies = proxies
-	if err := g.Select(); err != nil {
+	if err := g.Select(probe.Timeout); err != nil {
 		return nil, err
 	}
 	interval := probe.Interval
@@ -93,7 +93,7 @@ func newProxyGroup(proxies []*url.URL, bypass, block string, probe probe) (*prox
 	g.ticker = time.NewTicker(time.Duration(interval) * time.Second)
 	go func() {
 		for range g.ticker.C {
-			if err := g.Select(); err != nil {
+			if err := g.Select(probe.Timeout); err != nil {
 				log.Printf("select transport: %s", err)
 			}
 		}
@@ -101,7 +101,10 @@ func newProxyGroup(proxies []*url.URL, bypass, block string, probe probe) (*prox
 	return g, nil
 }
 
-func (g *proxyGroup) Select() error {
+func (g *proxyGroup) Select(timeout int) error {
+	if timeout <= 0 {
+		timeout = 3
+	}
 	var winner transport.ContextDialer
 	var winnerURL *url.URL
 	var latency time.Duration
@@ -113,7 +116,7 @@ func (g *proxyGroup) Select() error {
 		}
 
 		start := time.Now()
-		conn, err := net.DialTimeout("tcp", pu.Host, time.Second)
+		conn, err := net.DialTimeout("tcp", pu.Host, time.Duration(timeout)*time.Second)
 		if err != nil {
 			debugf("probe %s: %s", pu.Host, err)
 			continue
@@ -140,7 +143,13 @@ func (g *proxyGroup) Select() error {
 	g.dialer = winner
 	g.selectedID = winnerURL.String()
 	g.mu.Unlock()
-	log.Printf("select server: %s", winnerURL.Host)
+	var name string
+	if q := winnerURL.Query(); q != nil {
+		if n := q.Get("name"); n != "" {
+			name = n
+		}
+	}
+	log.Printf("select server: %s %s", winnerURL.Host, name)
 	return nil
 }
 
