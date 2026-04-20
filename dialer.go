@@ -51,10 +51,10 @@ func newDialer(u *url.URL) (transport.ContextDialer, error) {
 type proxyGroup struct {
 	proxies []*url.URL
 
-	mu         sync.RWMutex
-	ticker     *time.Ticker
-	selectedID string
-	dialer     transport.ContextDialer
+	mu       sync.RWMutex
+	ticker   *time.Ticker
+	dialerID string
+	dialer   transport.ContextDialer
 
 	bypass *hostMatcher
 	block  *hostMatcher
@@ -107,7 +107,7 @@ func (g *proxyGroup) Select(timeout int) error {
 	}
 	var winner transport.ContextDialer
 	var winnerURL *url.URL
-	var latency time.Duration
+	var minLatency time.Duration
 	for _, pu := range g.proxies {
 		d, err := newDialer(pu)
 		if err != nil {
@@ -124,8 +124,8 @@ func (g *proxyGroup) Select(timeout int) error {
 		conn.Close()
 		duration := time.Since(start)
 
-		if latency == 0 || duration < latency {
-			latency = duration
+		if minLatency == 0 || duration < minLatency {
+			minLatency = duration
 			winner = d
 			winnerURL = pu
 		}
@@ -135,13 +135,13 @@ func (g *proxyGroup) Select(timeout int) error {
 		return errors.New("unable to find a valid server")
 	}
 
-	if g.selectedID == winnerURL.String() {
+	if g.dialerID == winnerURL.String() {
 		return nil
 	}
 
 	g.mu.Lock()
 	g.dialer = winner
-	g.selectedID = winnerURL.String()
+	g.dialerID = winnerURL.String()
 	g.mu.Unlock()
 	var name string
 	if q := winnerURL.Query(); q != nil {

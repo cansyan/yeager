@@ -12,7 +12,7 @@ import (
 )
 
 type socksServer struct {
-	lis    net.Listener
+	ln     net.Listener
 	dialer transport.ContextDialer
 }
 
@@ -23,12 +23,12 @@ func NewSOCKSServer(dialer transport.ContextDialer) *socksServer {
 	return &socksServer{dialer: dialer}
 }
 
-// Serve serves connection accepted by lis,
+// Serve serves connection accepted by ln,
 // blocking until the server closes or encounters an unexpected error.
-func (s *socksServer) Serve(lis net.Listener) error {
-	s.lis = lis
+func (s *socksServer) Serve(ln net.Listener) error {
+	s.ln = ln
 	for {
-		conn, err := lis.Accept()
+		conn, err := ln.Accept()
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				err = nil
@@ -61,5 +61,5 @@ func (s *socksServer) Serve(lis net.Listener) error {
 }
 
 func (s *socksServer) Close() error {
-	return s.lis.Close()
+	return s.ln.Close()
 }
