@@ -3,58 +3,24 @@ package main
 import (
 	"context"
 	"errors"
-	"io"
 	"log"
 	"net"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/cansyan/yeager/transport"
-	"github.com/cansyan/yeager/transport/shadowsocks"
-	"github.com/cansyan/yeager/transport/vmess"
-	"golang.org/x/net/proxy"
+	"github.com/cansyan/yeager/proxy"
 )
 
-// newDialer creates a transport.ContextDialer from the given proxy URL.
-func newDialer(u *url.URL) (transport.ContextDialer, error) {
-	switch u.Scheme {
-	case "ss":
-		if u.User == nil {
-			return nil, errors.New("missing credential")
-		}
-		pass, _ := u.User.Password()
-		return shadowsocks.NewDialer(u.Host, u.User.Username(), pass)
-	case "vmess":
-		if u.User == nil {
-			return nil, errors.New("missing credential")
-		}
-		pass, _ := u.User.Password()
-		return vmess.NewDialer(u.Host, pass, u.User.Username(), 0)
-	case "socks5":
-		// Reuse the standard SOCKS5 dialer so yeager can interoperate with
-		// existing SOCKS5-compatible proxies, including naiveproxy.
-		d, err := proxy.FromURL(u, nil)
-		if err != nil {
-			return nil, err
-		}
-		if cd, ok := d.(transport.ContextDialer); ok {
-			return cd, nil
-		}
-	}
-	return nil, errors.New("unknown proxy url: " + u.String())
-}
-
-// proxyGroup implements transport.ContextDialer and performs periodic health checks.
+// proxyGroup implements ContextDialer and performs periodic health checks.
 type proxyGroup struct {
 	proxies []*url.URL
 
 	mu       sync.RWMutex
 	ticker   *time.Ticker
 	dialerID string
-	dialer   transport.ContextDialer
+	dialer   proxy.ContextDialer
 
 	bypass *hostMatcher
 	block  *hostMatcher
@@ -74,7 +40,7 @@ func newProxyGroup(proxies []*url.URL, bypass, block string, probe probe) (*prox
 	}
 
 	if len(proxies) == 1 {
-		d, err := newDialer(proxies[0])
+		d, err := proxy.FromURL(proxies[0])
 		if err != nil {
 			return nil, err
 		}
@@ -105,20 +71,20 @@ func (g *proxyGroup) Select(timeout int) error {
 	if timeout <= 0 {
 		timeout = 3
 	}
-	var winner transport.ContextDialer
+	var winner proxy.ContextDialer
 	var winnerURL *url.URL
 	var minLatency time.Duration
-	for _, pu := range g.proxies {
-		d, err := newDialer(pu)
+	for _, u := range g.proxies {
+		d, err := proxy.FromURL(u)
 		if err != nil {
 			log.Print(err)
 			continue
 		}
 
 		start := time.Now()
-		conn, err := net.DialTimeout("tcp", pu.Host, time.Duration(timeout)*time.Second)
+		conn, err := net.DialTimeout("tcp", u.Host, time.Duration(timeout)*time.Second)
 		if err != nil {
-			debugf("probe %s: %s", pu.Host, err)
+			debugf("probe %s: %s", u.Host, err)
 			continue
 		}
 		conn.Close()
@@ -127,9 +93,9 @@ func (g *proxyGroup) Select(timeout int) error {
 		if minLatency == 0 || duration < minLatency {
 			minLatency = duration
 			winner = d
-			winnerURL = pu
+			winnerURL = u
 		}
-		debugf("probe %s %dms", pu.Host, duration.Milliseconds())
+		debugf("probe %s %dms", u.Host, duration.Milliseconds())
 	}
 	if winner == nil {
 		return errors.New("unable to find a valid server")
@@ -153,7 +119,7 @@ func (g *proxyGroup) Select(timeout int) error {
 	return nil
 }
 
-// implements interface transport.StreamDialer
+// implements interface ContextDialer
 func (g *proxyGroup) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -179,9 +145,6 @@ func (g *proxyGroup) Close() error {
 	defer g.mu.RUnlock()
 	if g.ticker != nil {
 		g.ticker.Stop()
-	}
-	if v, ok := g.dialer.(io.Closer); ok {
-		return v.Close()
 	}
 	return nil
 }
@@ -294,40 +257,4 @@ func (m domainMatch) match(host string, ip net.IP) bool {
 		return false
 	}
 	return before == "" || before[len(before)-1] == '.'
-}
-
-type closeWriter interface {
-	CloseWrite() error
-}
-
-// relay copies data between streams bidirectionally
-func relay(a, b net.Conn) error {
-	wait := 5 * time.Second
-	errc := make(chan error, 1)
-	go func() {
-		_, err := io.Copy(a, b)
-		// unblock read on a
-		if i, ok := a.(closeWriter); ok {
-			i.CloseWrite()
-		} else {
-			a.SetReadDeadline(time.Now().Add(wait))
-		}
-		errc <- err
-	}()
-	_, err := io.Copy(b, a)
-	// unblock read on b
-	if i, ok := b.(closeWriter); ok {
-		i.CloseWrite()
-	} else {
-		b.SetReadDeadline(time.Now().Add(wait))
-	}
-	err2 := <-errc
-
-	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
-		return err
-	}
-	if err2 != nil && !errors.Is(err2, os.ErrDeadlineExceeded) {
-		return err2
-	}
-	return nil
 }

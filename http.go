@@ -10,16 +10,16 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/cansyan/yeager/transport"
+	"golang.org/x/net/proxy"
 )
 
 type proxyHandler struct {
-	dialer transport.ContextDialer
+	dialer proxy.ContextDialer
 }
 
 // NewProxyHandler creates a http.Handler that acts as a web proxy
 // to reach the destination using the given dialer.
-func NewProxyHandler(dialer transport.ContextDialer) *proxyHandler {
+func NewProxyHandler(dialer proxy.ContextDialer) *proxyHandler {
 	return &proxyHandler{dialer: dialer}
 }
 
