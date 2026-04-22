@@ -16,16 +16,27 @@ func (d *ssDialer) DialContext(ctx context.Context, network, addr string) (net.C
 	return d.DialStream(ctx, addr)
 }
 
+func resolvedTCPEndpoint(addr *ResolvedAddr) transport.StreamEndpoint {
+	return transport.FuncStreamEndpoint(func(ctx context.Context) (transport.StreamConn, error) {
+		proxyAddr, err := addr.Address(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var dialer transport.TCPDialer
+		return dialer.DialStream(ctx, proxyAddr)
+	})
+}
+
 // Shadowsocks returns a ContextDialer that makes Shadowsocks connections to the given address.
 func Shadowsocks(address, method, password string) (ContextDialer, error) {
 	key, err := shadowsocks.NewEncryptionKey(method, password)
 	if err != nil {
 		return nil, err
 	}
-	endpoint := &transport.StreamDialerEndpoint{Dialer: &transport.TCPDialer{}, Address: address}
+	endpoint := resolvedTCPEndpoint(NewResolvedAddr(address))
 	d, err := shadowsocks.NewStreamDialer(endpoint, key)
 	if err != nil {
 		return nil, err
 	}
-	return &ssDialer{d}, nil
+	return &ssDialer{StreamDialer: d}, nil
 }

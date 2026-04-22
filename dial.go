@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -16,11 +18,11 @@ import (
 // proxyGroup implements ContextDialer and performs periodic health checks.
 type proxyGroup struct {
 	proxies []*url.URL
+	dialers []proxy.ContextDialer
 
-	mu       sync.RWMutex
-	ticker   *time.Ticker
-	dialerID string
-	dialer   proxy.ContextDialer
+	ticker *time.Ticker
+	mu     sync.RWMutex // guards idx
+	idx    int          // current dialer index
 
 	bypass *hostMatcher
 	block  *hostMatcher
@@ -44,11 +46,19 @@ func newProxyGroup(proxies []*url.URL, bypass, block string, probe probe) (*prox
 		if err != nil {
 			return nil, err
 		}
-		g.dialer = d
+		g.dialers = append(g.dialers, d)
 		return g, nil
 	}
 
 	g.proxies = proxies
+	g.dialers = make([]proxy.ContextDialer, len(proxies))
+	for i, u := range proxies {
+		d, err := proxy.FromURL(u)
+		if err != nil {
+			return nil, err
+		}
+		g.dialers[i] = d
+	}
 	if err := g.Select(probe.Timeout); err != nil {
 		return nil, err
 	}
@@ -67,63 +77,62 @@ func newProxyGroup(proxies []*url.URL, bypass, block string, probe probe) (*prox
 	return g, nil
 }
 
+func urlTest(d proxy.ContextDialer, url string, timeout time.Duration) error {
+	tr := http.Transport{DialContext: d.DialContext}
+	client := http.Client{Transport: &tr, Timeout: timeout}
+	resp, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return errors.New("unexpected status: " + resp.Status)
+	}
+	return nil
+}
+
 func (g *proxyGroup) Select(timeout int) error {
 	if timeout <= 0 {
 		timeout = 3
 	}
-	var winner proxy.ContextDialer
-	var winnerURL *url.URL
+	var winner = -1
 	var minLatency time.Duration
-	for _, u := range g.proxies {
-		d, err := proxy.FromURL(u)
-		if err != nil {
-			log.Print(err)
-			continue
-		}
-
+	for i, u := range g.proxies {
 		start := time.Now()
-		conn, err := net.DialTimeout("tcp", u.Host, time.Duration(timeout)*time.Second)
+		target := "http://www.gstatic.com/generate_204"
+		err := urlTest(g.dialers[i], target, time.Duration(timeout)*time.Second)
 		if err != nil {
-			debugf("probe %s: %s", u.Host, err)
+			debugf("probe %s failed: %s", u.Host, err)
 			continue
 		}
-		conn.Close()
 		duration := time.Since(start)
-
 		if minLatency == 0 || duration < minLatency {
 			minLatency = duration
-			winner = d
-			winnerURL = u
+			winner = i
 		}
 		debugf("probe %s %dms", u.Host, duration.Milliseconds())
 	}
-	if winner == nil {
-		return errors.New("unable to find a valid server")
+	if winner == -1 {
+		return errors.New("no available proxy")
 	}
 
-	if g.dialerID == winnerURL.String() {
+	g.mu.RLock()
+	if g.idx == winner {
+		g.mu.RUnlock()
 		return nil
 	}
+	g.mu.RUnlock()
 
 	g.mu.Lock()
-	g.dialer = winner
-	g.dialerID = winnerURL.String()
+	g.idx = winner
 	g.mu.Unlock()
-	var name string
-	if q := winnerURL.Query(); q != nil {
-		if n := q.Get("name"); n != "" {
-			name = n
-		}
-	}
-	log.Printf("select server: %s %s", winnerURL.Host, name)
+	log.Printf("select server: %s", g.proxies[winner].Host)
 	return nil
 }
 
-// implements interface ContextDialer
+// implements interface proxy.ContextDialer
 func (g *proxyGroup) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
 	if g.block != nil && g.block.match(addr) {
 		return nil, errors.New("blocked host")
 	}
@@ -137,12 +146,13 @@ func (g *proxyGroup) DialContext(ctx context.Context, network, addr string) (net
 		return conn, nil
 	}
 	debugf("connect to %s", addr)
-	return g.dialer.DialContext(ctx, network, addr)
+	g.mu.RLock()
+	dialer := g.dialers[g.idx]
+	g.mu.RUnlock()
+	return dialer.DialContext(ctx, network, addr)
 }
 
 func (g *proxyGroup) Close() error {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
 	if g.ticker != nil {
 		g.ticker.Stop()
 	}

@@ -9,13 +9,17 @@ import (
 )
 
 type vmessDialer struct {
-	proxyAddr string
+	proxyAddr *ResolvedAddr
 	client    *vmess.Client
 }
 
 func (d *vmessDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	proxyAddr, err := d.proxyAddr.Address(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, "tcp", d.proxyAddr)
+	conn, err := dialer.DialContext(ctx, "tcp", proxyAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -34,5 +38,5 @@ func Vmess(address, security, userID string) (ContextDialer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &vmessDialer{proxyAddr: address, client: client}, nil
+	return &vmessDialer{proxyAddr: NewResolvedAddr(address), client: client}, nil
 }
