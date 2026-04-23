@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -17,8 +18,9 @@ import (
 
 // proxyGroup implements ContextDialer and performs periodic health checks.
 type proxyGroup struct {
-	proxies []*url.URL
-	dialers []proxy.ContextDialer
+	proxies   []*url.URL
+	dialers   []proxy.ContextDialer
+	cacheAddr []*proxy.ResolvedAddr
 
 	ticker *time.Ticker
 	mu     sync.RWMutex // guards idx
@@ -52,14 +54,16 @@ func newProxyGroup(proxies []*url.URL, bypass, block string, probe probe) (*prox
 
 	g.proxies = proxies
 	g.dialers = make([]proxy.ContextDialer, len(proxies))
+	g.cacheAddr = make([]*proxy.ResolvedAddr, len(proxies))
 	for i, u := range proxies {
 		d, err := proxy.FromURL(u)
 		if err != nil {
 			return nil, err
 		}
 		g.dialers[i] = d
+		g.cacheAddr[i] = proxy.NewResolvedAddr(u.Host)
 	}
-	if err := g.Select(probe.Timeout); err != nil {
+	if err := g.Select(probe); err != nil {
 		return nil, err
 	}
 	interval := probe.Interval
@@ -69,7 +73,7 @@ func newProxyGroup(proxies []*url.URL, bypass, block string, probe probe) (*prox
 	g.ticker = time.NewTicker(time.Duration(interval) * time.Second)
 	go func() {
 		for range g.ticker.C {
-			if err := g.Select(probe.Timeout); err != nil {
+			if err := g.Select(probe); err != nil {
 				log.Printf("select transport: %s", err)
 			}
 		}
@@ -77,33 +81,74 @@ func newProxyGroup(proxies []*url.URL, bypass, block string, probe probe) (*prox
 	return g, nil
 }
 
-func urlTest(d proxy.ContextDialer, url string, timeout time.Duration) error {
-	tr := http.Transport{DialContext: d.DialContext}
-	client := http.Client{Transport: &tr, Timeout: timeout}
-	resp, err := client.Get(url)
+func (g *proxyGroup) probing(i int, kind string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	// default tcp test
+	if kind != "urltest" {
+		addr, err := g.cacheAddr[i].Address(ctx)
+		if err != nil {
+			return err
+		}
+		var d net.Dialer
+		conn, err := d.DialContext(ctx, "tcp", addr)
+		if err != nil {
+			return err
+		}
+		conn.Close()
+		return nil
+	}
+
+	// url test
+	const testURL, testHost = "http://www.gstatic.com/generate_204", "www.gstatic.com:80"
+	req, err := http.NewRequestWithContext(ctx, "GET", testURL, nil)
 	if err != nil {
 		return err
 	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return errors.New("unexpected status: " + resp.Status)
+	conn, err := g.dialers[i].DialContext(ctx, "tcp", testHost)
+	if err != nil {
+		return err
 	}
-	return nil
+	defer conn.Close()
+	if err = req.Write(conn); err != nil {
+		return err
+	}
+
+	ch := make(chan *http.Response, 1)
+	go func() {
+		resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+		if err != nil {
+			debugf("read resp: %s", err)
+			return
+		}
+		ch <- resp
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case resp := <-ch:
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return errors.New("unexpected status: " + resp.Status)
+		}
+		return nil
+	}
 }
 
-func (g *proxyGroup) Select(timeout int) error {
-	if timeout <= 0 {
-		timeout = 3
+func (g *proxyGroup) Select(probe probe) error {
+	timeout := 3 * time.Second
+	if probe.Timeout > 0 {
+		timeout = time.Duration(probe.Timeout) * time.Second
 	}
+
 	var winner = -1
 	var minLatency time.Duration
 	for i, u := range g.proxies {
 		start := time.Now()
-		target := "http://www.gstatic.com/generate_204"
-		err := urlTest(g.dialers[i], target, time.Duration(timeout)*time.Second)
-		if err != nil {
-			debugf("probe %s failed: %s", u.Host, err)
+		if err := g.probing(i, probe.Type, timeout); err != nil {
+			debugf("probe %s: %s", u.Host, err)
 			continue
 		}
 		duration := time.Since(start)
@@ -111,7 +156,7 @@ func (g *proxyGroup) Select(timeout int) error {
 			minLatency = duration
 			winner = i
 		}
-		debugf("probe %s %dms", u.Host, duration.Milliseconds())
+		debugf("probe %s in %dms", u.Host, duration.Milliseconds())
 	}
 	if winner == -1 {
 		return errors.New("no available proxy")

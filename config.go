@@ -30,6 +30,7 @@ type Config struct {
 }
 
 type probe struct {
-	Interval int `json:"interval,omitempty"` // in seconds
-	Timeout  int `json:"timeout,omitempty"`  // in seconds
+	Type     string `json:"type,omitempty"`     // tcp, urltest
+	Interval int    `json:"interval,omitempty"` // in seconds
+	Timeout  int    `json:"timeout,omitempty"`  // in seconds
 }
