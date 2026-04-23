@@ -18,19 +18,18 @@ import (
 
 // proxyGroup implements ContextDialer and performs periodic health checks.
 type proxyGroup struct {
-	proxies []*url.URL
+	urls    []*url.URL
 	dialers []proxy.ContextDialer
-
-	ticker *time.Ticker
-	mu     sync.RWMutex // guards idx
-	idx    int          // current dialer index
+	ticker  *time.Ticker
+	mu      sync.RWMutex // guards idx
+	idx     int          // current dialer index
 
 	bypass *hostMatcher
 	block  *hostMatcher
 }
 
-func newProxyGroup(proxies []*url.URL, bypass, block string, probe probeConfig) (*proxyGroup, error) {
-	if len(proxies) == 0 {
+func newProxyGroup(urls []*url.URL, bypass, block string, probe probeConfig) (*proxyGroup, error) {
+	if len(urls) == 0 {
 		return nil, errors.New("missing proxy config")
 	}
 
@@ -42,9 +41,9 @@ func newProxyGroup(proxies []*url.URL, bypass, block string, probe probeConfig) 
 		g.bypass = parseHostMatcher(bypass)
 	}
 
-	g.proxies = proxies
-	g.dialers = make([]proxy.ContextDialer, len(proxies))
-	for i, u := range proxies {
+	g.urls = urls
+	g.dialers = make([]proxy.ContextDialer, len(urls))
+	for i, u := range urls {
 		d, err := proxy.FromURL(u)
 		if err != nil {
 			return nil, err
@@ -78,7 +77,7 @@ func (g *proxyGroup) probe(i int, kind string, timeout time.Duration) error {
 	defer cancel()
 	// default tcp test
 	if kind != "urltest" {
-		addr, err := proxy.GetCachedAddr(g.proxies[i].Host).Address(ctx)
+		addr, err := proxy.GetCachedAddr(g.urls[i].Host).Address(ctx)
 		if err != nil {
 			return err
 		}
@@ -137,7 +136,7 @@ func (g *proxyGroup) Select(probe probeConfig) error {
 
 	var winner = -1
 	var minLatency time.Duration
-	for i, u := range g.proxies {
+	for i, u := range g.urls {
 		start := time.Now()
 		if err := g.probe(i, probe.Type, timeout); err != nil {
 			debugf("probe %s: %s", u.Host, err)
@@ -164,7 +163,7 @@ func (g *proxyGroup) Select(probe probeConfig) error {
 	g.mu.Lock()
 	g.idx = winner
 	g.mu.Unlock()
-	log.Printf("select server: %s", g.proxies[winner].Host)
+	log.Printf("select server: %s", g.urls[winner].Host)
 	return nil
 }
 
