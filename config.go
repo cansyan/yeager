@@ -26,10 +26,10 @@ type Config struct {
 	// Block has priority over Bypass.
 	Block string `json:"block,omitempty"`
 
-	Probe probe `json:"probe,omitempty"`
+	Probe probeConfig `json:"probe,omitempty"`
 }
 
-type probe struct {
+type probeConfig struct {
 	Type     string `json:"type,omitempty"`     // tcp, urltest
 	Interval int    `json:"interval,omitempty"` // in seconds
 	Timeout  int    `json:"timeout,omitempty"`  // in seconds

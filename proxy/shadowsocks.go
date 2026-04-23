@@ -33,7 +33,7 @@ func Shadowsocks(address, method, password string) (ContextDialer, error) {
 	if err != nil {
 		return nil, err
 	}
-	endpoint := resolvedTCPEndpoint(NewResolvedAddr(address))
+	endpoint := resolvedTCPEndpoint(GetCachedAddr(address))
 	d, err := shadowsocks.NewStreamDialer(endpoint, key)
 	if err != nil {
 		return nil, err

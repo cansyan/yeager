@@ -38,5 +38,5 @@ func Vmess(address, security, userID string) (ContextDialer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &vmessDialer{proxyAddr: NewResolvedAddr(address), client: client}, nil
+	return &vmessDialer{proxyAddr: GetCachedAddr(address), client: client}, nil
 }

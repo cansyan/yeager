@@ -111,3 +111,22 @@ func (a *ResolvedAddr) Address(ctx context.Context) (string, error) {
 	// the underlying dialer perform normal name resolution.
 	return a.original, nil
 }
+
+var (
+	addrCache = make(map[string]*ResolvedAddr)
+	cacheMu   sync.Mutex
+)
+
+// GetCachedAddr returns a cached ResolvedAddr or creates a new one.
+func GetCachedAddr(address string) *ResolvedAddr {
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+
+	if ra, ok := addrCache[address]; ok {
+		return ra
+	}
+
+	ra := NewResolvedAddr(address)
+	addrCache[address] = ra
+	return ra
+}

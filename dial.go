@@ -18,9 +18,8 @@ import (
 
 // proxyGroup implements ContextDialer and performs periodic health checks.
 type proxyGroup struct {
-	proxies   []*url.URL
-	dialers   []proxy.ContextDialer
-	cacheAddr []*proxy.ResolvedAddr
+	proxies []*url.URL
+	dialers []proxy.ContextDialer
 
 	ticker *time.Ticker
 	mu     sync.RWMutex // guards idx
@@ -30,7 +29,7 @@ type proxyGroup struct {
 	block  *hostMatcher
 }
 
-func newProxyGroup(proxies []*url.URL, bypass, block string, probe probe) (*proxyGroup, error) {
+func newProxyGroup(proxies []*url.URL, bypass, block string, probe probeConfig) (*proxyGroup, error) {
 	if len(proxies) == 0 {
 		return nil, errors.New("missing proxy config")
 	}
@@ -43,26 +42,19 @@ func newProxyGroup(proxies []*url.URL, bypass, block string, probe probe) (*prox
 		g.bypass = parseHostMatcher(bypass)
 	}
 
-	if len(proxies) == 1 {
-		d, err := proxy.FromURL(proxies[0])
-		if err != nil {
-			return nil, err
-		}
-		g.dialers = append(g.dialers, d)
-		return g, nil
-	}
-
 	g.proxies = proxies
 	g.dialers = make([]proxy.ContextDialer, len(proxies))
-	g.cacheAddr = make([]*proxy.ResolvedAddr, len(proxies))
 	for i, u := range proxies {
 		d, err := proxy.FromURL(u)
 		if err != nil {
 			return nil, err
 		}
 		g.dialers[i] = d
-		g.cacheAddr[i] = proxy.NewResolvedAddr(u.Host)
 	}
+	if len(g.dialers) == 1 {
+		return g, nil
+	}
+
 	if err := g.Select(probe); err != nil {
 		return nil, err
 	}
@@ -81,12 +73,12 @@ func newProxyGroup(proxies []*url.URL, bypass, block string, probe probe) (*prox
 	return g, nil
 }
 
-func (g *proxyGroup) probing(i int, kind string, timeout time.Duration) error {
+func (g *proxyGroup) probe(i int, kind string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	// default tcp test
 	if kind != "urltest" {
-		addr, err := g.cacheAddr[i].Address(ctx)
+		addr, err := proxy.GetCachedAddr(g.proxies[i].Host).Address(ctx)
 		if err != nil {
 			return err
 		}
@@ -137,7 +129,7 @@ func (g *proxyGroup) probing(i int, kind string, timeout time.Duration) error {
 	}
 }
 
-func (g *proxyGroup) Select(probe probe) error {
+func (g *proxyGroup) Select(probe probeConfig) error {
 	timeout := 3 * time.Second
 	if probe.Timeout > 0 {
 		timeout = time.Duration(probe.Timeout) * time.Second
@@ -147,7 +139,7 @@ func (g *proxyGroup) Select(probe probe) error {
 	var minLatency time.Duration
 	for i, u := range g.proxies {
 		start := time.Now()
-		if err := g.probing(i, probe.Type, timeout); err != nil {
+		if err := g.probe(i, probe.Type, timeout); err != nil {
 			debugf("probe %s: %s", u.Host, err)
 			continue
 		}
