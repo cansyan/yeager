@@ -67,21 +67,7 @@ func main() {
 		return
 	}
 
-	proxyUrls := make([]*url.URL, 0, len(conf.Proxy))
-	for _, proxyURL := range conf.Proxy {
-		u, err := url.Parse(proxyURL)
-		if err != nil {
-			log.Printf("invalid proxy url: %s", err)
-			return
-		}
-		if u.Host == "" {
-			log.Printf("missing proxy address: %s", proxyURL)
-			return
-		}
-		proxyUrls = append(proxyUrls, u)
-	}
-
-	dialer, err := newProxyGroup(proxyUrls, conf.Bypass, conf.Block, conf.Probe)
+	dialer, err := newProxyGroup(conf)
 	if err != nil {
 		log.Printf("init dialer: %s", err)
 		return
