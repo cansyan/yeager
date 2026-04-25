@@ -12,6 +12,7 @@ This repository is a small Go module centered in the repo root. Application entr
 
 ## Coding Style & Naming Conventions
 Follow the existing Go style and keep code explicit. Prefer early returns, small functions, and standard-library APIs unless a dependency is already in `go.mod`. Use `gofmt` on every change and keep package names lowercase and single-word. Avoid stuttering names and clever abstractions; examples in this repo favor concise identifiers like `dialer`, `transport`, and `config`.
+Do not rewrite the built-in functions like `max` and `min` unless there is a clear reason to do so.
 
 ## Testing Guidelines
 Write table-driven tests in the same package (`package main`) and keep test files named `*_test.go`. Name tests with the standard `TestXxx` pattern, matching the behavior under test, such as `TestHttpProxy`. Add or update tests for new proxy protocols, routing behavior, and config parsing whenever logic changes.

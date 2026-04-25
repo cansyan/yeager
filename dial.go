@@ -24,14 +24,28 @@ type proxyGroup struct {
 	ticker  *time.Ticker
 	mu      sync.RWMutex // guards idx
 	idx     int          // current dialer index
+	stat    []*ServerStat
 
 	bypass *hostMatcher
 	block  *hostMatcher
 }
 
+const (
+	defaultProbeInterval = 30
+	defaultProbeTimeout  = 3
+)
+
 func newProxyGroup(c Config) (*proxyGroup, error) {
 	if len(c.Proxy) == 0 {
 		return nil, errors.New("missing proxy url")
+	}
+
+	pc := c.Probe
+	if pc.Timeout == 0 {
+		pc.Timeout = defaultProbeTimeout
+	}
+	if pc.Interval == 0 {
+		pc.Interval = defaultProbeInterval
 	}
 
 	g := new(proxyGroup)
@@ -44,6 +58,9 @@ func newProxyGroup(c Config) (*proxyGroup, error) {
 
 	g.urls = make([]*url.URL, len(c.Proxy))
 	g.dialers = make([]proxy.ContextDialer, len(c.Proxy))
+	g.stat = make([]*ServerStat, len(c.Proxy))
+
+	rttMax := pc.Timeout * 1000
 	for i, s := range c.Proxy {
 		u, err := url.Parse(s)
 		if err != nil || u.Host == "" {
@@ -55,22 +72,20 @@ func newProxyGroup(c Config) (*proxyGroup, error) {
 			return nil, err
 		}
 		g.dialers[i] = d
+		g.stat[i] = newServerStat(rttMax)
 	}
 	if len(g.dialers) == 1 {
 		return g, nil
 	}
 
-	if err := g.Select(c.Probe); err != nil {
+	if err := g.Select(pc); err != nil {
 		return nil, err
 	}
-	interval := c.Probe.Interval
-	if interval == 0 {
-		interval = 60
-	}
-	g.ticker = time.NewTicker(time.Duration(interval) * time.Second)
+
+	g.ticker = time.NewTicker(time.Duration(pc.Interval) * time.Second)
 	go func() {
 		for range g.ticker.C {
-			if err := g.Select(c.Probe); err != nil {
+			if err := g.Select(pc); err != nil {
 				log.Printf("select transport: %s", err)
 			}
 		}
@@ -82,7 +97,7 @@ func (g *proxyGroup) probe(i int, kind string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	// default tcp test
-	if kind != "urltest" {
+	if kind == "" || kind == "tcp" {
 		addr, err := proxy.GetCachedAddr(g.urls[i].Host).Address(ctx)
 		if err != nil {
 			return err
@@ -139,37 +154,39 @@ func (g *proxyGroup) Select(probe probeConfig) error {
 	current := g.idx
 	g.mu.RUnlock()
 
-	timeout := 3 * time.Second
-	if probe.Timeout > 0 {
-		timeout = time.Duration(probe.Timeout) * time.Second
+	var best int
+	var bestIdx int
+	results := make(chan [2]int, len(g.urls))
+
+	for i, u := range g.urls {
+		go func(i int, u *url.URL) {
+			start := time.Now()
+			err := g.probe(i, probe.Type, time.Duration(probe.Timeout)*time.Second)
+			duration := time.Since(start)
+			g.stat[i].Put(int(duration.Milliseconds()), err != nil)
+			score := g.stat[i].Score()
+			results <- [2]int{i, score}
+			debugf("probe %s in %dms, score: %d, err: %v", u.Host, duration.Milliseconds(), score, err)
+		}(i, u)
 	}
 
-	var winner = -1
-	var minLatency time.Duration
-	for i, u := range g.urls {
-		start := time.Now()
-		if err := g.probe(i, probe.Type, timeout); err != nil {
-			debugf("probe %s: %s", u.Host, err)
-			continue
+	for range g.urls {
+		r := <-results
+		i, score := r[0], r[1]
+		if best == 0 || score < best {
+			best = score
+			bestIdx = i
 		}
-		duration := time.Since(start)
-		if minLatency == 0 || duration < minLatency {
-			minLatency = duration
-			winner = i
-		}
-		debugf("probe %s in %dms", u.Host, duration.Milliseconds())
 	}
-	if winner == -1 {
-		return errors.New("no available proxy")
-	}
-	if current == winner {
+
+	if current == bestIdx {
 		return nil
 	}
 
 	g.mu.Lock()
-	g.idx = winner
+	g.idx = bestIdx
 	g.mu.Unlock()
-	log.Printf("select server: %s", g.urls[winner].Host)
+	log.Printf("select server: %s", g.urls[bestIdx].Host)
 	return nil
 }
 
