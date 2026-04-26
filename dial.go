@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cansyan/yeager/proxy"
@@ -24,7 +25,8 @@ type proxyGroup struct {
 	ticker  *time.Ticker
 	mu      sync.RWMutex // guards idx
 	idx     int          // current dialer index
-	stat    []*ServerStat
+
+	fails atomic.Int64
 
 	bypass *hostMatcher
 	block  *hostMatcher
@@ -32,7 +34,7 @@ type proxyGroup struct {
 
 const (
 	defaultProbeInterval = 30
-	defaultProbeTimeout  = 3
+	defaultProbeTimeout  = 5
 )
 
 func newProxyGroup(c Config) (*proxyGroup, error) {
@@ -58,9 +60,7 @@ func newProxyGroup(c Config) (*proxyGroup, error) {
 
 	g.urls = make([]*url.URL, len(c.Proxy))
 	g.dialers = make([]proxy.ContextDialer, len(c.Proxy))
-	g.stat = make([]*ServerStat, len(c.Proxy))
 
-	rttMax := pc.Timeout * 1000
 	for i, s := range c.Proxy {
 		u, err := url.Parse(s)
 		if err != nil || u.Host == "" {
@@ -72,22 +72,22 @@ func newProxyGroup(c Config) (*proxyGroup, error) {
 			return nil, err
 		}
 		g.dialers[i] = d
-		g.stat[i] = newServerStat(rttMax)
 	}
 	if len(g.dialers) == 1 {
 		return g, nil
 	}
 
-	if err := g.Select(pc); err != nil {
-		return nil, err
-	}
+	g.Select(pc)
 
 	g.ticker = time.NewTicker(time.Duration(pc.Interval) * time.Second)
 	go func() {
 		for range g.ticker.C {
-			if err := g.Select(pc); err != nil {
-				log.Printf("select transport: %s", err)
+			// avoid unnecessary probe if the current server is healthy
+			fails := g.fails.Swap(0)
+			if fails <= int64(pc.Interval)/defaultProbeTimeout {
+				continue
 			}
+			g.Select(pc)
 		}
 	}()
 	return g, nil
@@ -150,7 +150,7 @@ func (g *proxyGroup) probe(i int, kind string, timeout time.Duration) error {
 	}
 }
 
-func (g *proxyGroup) Select(probe probeConfig) error {
+func (g *proxyGroup) Select(probe probeConfig) {
 	g.mu.RLock()
 	current := g.idx
 	g.mu.RUnlock()
@@ -164,31 +164,32 @@ func (g *proxyGroup) Select(probe probeConfig) error {
 			start := time.Now()
 			err := g.probe(i, probe.Type, time.Duration(probe.Timeout)*time.Second)
 			duration := time.Since(start)
-			g.stat[i].Put(int(duration.Milliseconds()), err != nil)
-			score := g.stat[i].Score()
-			results <- [2]int{i, score}
-			debugf("probe %s in %dms, score: %d, err: %v", u.Host, duration.Milliseconds(), score, err)
+			results <- [2]int{i, int(duration.Milliseconds())}
+			if err != nil {
+				debugf("probe %s, err: %s", u.Host, err)
+				return
+			}
+			debugf("probe %s, rtt %dms", u.Host, duration.Milliseconds())
 		}(i, u)
 	}
 
 	for range g.urls {
 		r := <-results
-		i, score := r[0], r[1]
-		if best == 0 || score < best {
-			best = score
+		i, latency := r[0], r[1]
+		if best == 0 || latency < best {
+			best = latency
 			bestIdx = i
 		}
 	}
 
 	if current == bestIdx {
-		return nil
+		return
 	}
 
 	g.mu.Lock()
 	g.idx = bestIdx
 	g.mu.Unlock()
-	log.Printf("select server: %s", g.urls[bestIdx].Host)
-	return nil
+	log.Printf("select server %s", g.urls[bestIdx].Host)
 }
 
 // implements interface proxy.ContextDialer
@@ -210,8 +211,12 @@ func (g *proxyGroup) DialContext(ctx context.Context, network, addr string) (net
 	i := g.idx
 	g.mu.RUnlock()
 	d := g.dialers[i]
+	conn, err := d.DialContext(ctx, network, addr)
+	if err != nil {
+		g.fails.Add(1)
+	}
 	debugf("connect to %s", addr)
-	return d.DialContext(ctx, network, addr)
+	return conn, err
 }
 
 func (g *proxyGroup) Close() error {
