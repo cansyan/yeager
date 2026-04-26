@@ -126,26 +126,27 @@ func (g *proxyGroup) probe(i int, kind string, timeout time.Duration) error {
 		return err
 	}
 
-	ch := make(chan *http.Response, 1)
+	ch := make(chan error, 1)
 	go func() {
 		resp, err := http.ReadResponse(bufio.NewReader(conn), req)
 		if err != nil {
-			debugf("read resp: %s", err)
+			ch <- err
 			return
 		}
-		ch <- resp
+		defer resp.Body.Close()
+		if resp.StatusCode != 204 {
+			ch <- errors.New("unexpected status: " + resp.Status)
+			return
+		}
+		io.Copy(io.Discard, resp.Body)
+		ch <- nil
 	}()
 
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case resp := <-ch:
-		defer resp.Body.Close()
-		io.Copy(io.Discard, resp.Body)
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return errors.New("unexpected status: " + resp.Status)
-		}
-		return nil
+	case err := <-ch:
+		return err
 	}
 }
 
