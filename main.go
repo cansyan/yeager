@@ -1,9 +1,12 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -12,6 +15,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 )
 
 var verbose bool
@@ -28,19 +32,32 @@ func main() {
 		config string
 		listen string
 		proxy  string
+		subs   string
 	}
 	flag.StringVar(&flags.config, "c", "", "config file")
 	flag.BoolVar(&verbose, "v", false, "verbose logging")
 	flag.StringVar(&flags.listen, "listen", "", "socks://host:port")
 	flag.StringVar(&flags.proxy, "proxy", "", "ss://method:password@host:port")
+	flag.StringVar(&flags.subs, "subs", "", "convert JMS subscription to proxy url")
 	flag.Parse()
 
-	if flags.config == "" && flags.listen == "" {
+	if flags.config == "" && flags.listen == "" && flags.subs == "" {
 		flag.Usage()
 		return
 	}
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+	if flags.subs != "" {
+		urls, err := getSubscription(flags.subs)
+		if err != nil {
+			fmt.Printf("convert subscription: %s", err)
+			return
+		}
+		bs, _ := json.MarshalIndent(urls, "", "    ")
+		fmt.Println(string(bs))
+		return
+	}
 
 	var conf Config
 	if flags.config != "" {
@@ -120,4 +137,58 @@ func main() {
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
 	sig := <-ch
 	log.Printf("received %s", sig)
+}
+
+// get JMS subscription
+func getSubscription(url string) ([]string, error) {
+	client := http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, errors.New("unexpected status: " + resp.Status)
+	}
+	bs, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	bs, err = base64.RawURLEncoding.DecodeString(string(bs))
+	if err != nil {
+		return nil, err
+	}
+	rawurls := strings.Split(string(bs), "\n")
+	results := make([]string, 0, len(rawurls))
+	for _, rawURL := range rawurls {
+		// ss://base64urlencode(method:password@host:port)#tag
+		if rest, ok := strings.CutPrefix(rawURL, "ss://"); ok {
+			rest, _, _ = strings.Cut(rest, "#")
+			bs, err := base64.RawURLEncoding.DecodeString(rest)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, "ss://"+string(bs))
+			continue
+		}
+		// vmess://base64urlencode({"ps":"tag","port":"port","id":"uuid","aid":0,"net":"tcp","type":"none","tls":"none","add":"host"})
+		if rest, ok := strings.CutPrefix(rawURL, "vmess://"); ok {
+			bs, err := base64.RawURLEncoding.DecodeString(rest)
+			if err != nil {
+				return nil, err
+			}
+			var data vmessConfig
+			if err := json.Unmarshal(bs, &data); err != nil {
+				return nil, err
+			}
+			results = append(results, fmt.Sprintf("vmess://auto:%s@%s:%s", data.ID, data.Add, data.Port))
+		}
+	}
+	return results, nil
+}
+
+type vmessConfig struct {
+	ID   string `json:"id"`
+	Add  string `json:"add"`
+	Port string `json:"port"`
 }
