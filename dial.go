@@ -32,7 +32,7 @@ type proxyGroup struct {
 
 const (
 	defaultProbeInterval = 30
-	defaultProbeTimeout  = 3
+	defaultProbeTimeout  = 5
 )
 
 func newProxyGroup(c Config) (*proxyGroup, error) {
@@ -93,37 +93,41 @@ func newProxyGroup(c Config) (*proxyGroup, error) {
 	return g, nil
 }
 
-func (g *proxyGroup) probe(i int, kind string, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+func (g *proxyGroup) probe(i int, kind string, timeout time.Duration) (int, error) {
+	// warm up DNS lookup
+	ctx1, cancel1 := context.WithTimeout(context.Background(), time.Second)
+	defer cancel1()
+	addr, err := proxy.GetCachedAddr(g.urls[i].Host).Address(ctx1)
+	if err != nil {
+		return 0, err
+	}
+
 	// default tcp test
+	start := time.Now()
 	if kind == "" || kind == "tcp" {
-		addr, err := proxy.GetCachedAddr(g.urls[i].Host).Address(ctx)
-		if err != nil {
-			return err
-		}
-		var d net.Dialer
-		conn, err := d.DialContext(ctx, "tcp", addr)
-		if err != nil {
-			return err
+		conn, derr := net.DialTimeout("tcp", addr, timeout)
+		if derr != nil {
+			return 0, derr
 		}
 		conn.Close()
-		return nil
+		return int(time.Since(start).Milliseconds()), nil
 	}
 
 	// url test
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	const testURL, testHost = "http://www.gstatic.com/generate_204", "www.gstatic.com:80"
 	req, err := http.NewRequestWithContext(ctx, "GET", testURL, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	conn, err := g.dialers[i].DialContext(ctx, "tcp", testHost)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer conn.Close()
 	if err = req.Write(conn); err != nil {
-		return err
+		return 0, err
 	}
 
 	ch := make(chan error, 1)
@@ -144,9 +148,12 @@ func (g *proxyGroup) probe(i int, kind string, timeout time.Duration) error {
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return 0, ctx.Err()
 	case err := <-ch:
-		return err
+		if err != nil {
+			return 0, err
+		}
+		return int(time.Since(start).Milliseconds()), nil
 	}
 }
 
@@ -161,13 +168,11 @@ func (g *proxyGroup) Select(probe probeConfig) error {
 
 	for i, u := range g.urls {
 		go func(i int, u *url.URL) {
-			start := time.Now()
-			err := g.probe(i, probe.Type, time.Duration(probe.Timeout)*time.Second)
-			duration := time.Since(start)
-			g.stat[i].Put(int(duration.Milliseconds()), err != nil)
+			latency, err := g.probe(i, probe.Type, time.Duration(probe.Timeout)*time.Second)
+			g.stat[i].Put(latency, err != nil)
 			score := g.stat[i].Score()
 			results <- [2]int{i, score}
-			debugf("probe %s in %dms, score: %d, err: %v", u.Host, duration.Milliseconds(), score, err)
+			debugf("probe %s in %dms, score: %d, err: %v", u.Host, latency, score, err)
 		}(i, u)
 	}
 
