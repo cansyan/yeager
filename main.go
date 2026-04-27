@@ -91,8 +91,8 @@ func main() {
 	}
 	defer dialer.Close()
 
-	for _, proxyURL := range conf.Listen {
-		u, err := url.Parse(proxyURL)
+	for _, lnURL := range conf.Listen {
+		u, err := url.Parse(lnURL)
 		if err != nil {
 			log.Print(err)
 			return
@@ -130,13 +130,13 @@ func main() {
 			log.Print("unsupported protocol: " + u.Scheme)
 			return
 		}
-		log.Printf("listen %s", proxyURL)
+		log.Printf("listen %s", lnURL)
 	}
 
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
 	sig := <-ch
-	log.Printf("received %s", sig)
+	log.Printf("exiting on %s", sig)
 }
 
 // get JMS subscription

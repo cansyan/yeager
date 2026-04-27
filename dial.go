@@ -32,7 +32,7 @@ type proxyGroup struct {
 
 const (
 	defaultProbeInterval = 30
-	defaultProbeTimeout  = 5
+	defaultProbeTimeout  = 3
 )
 
 func newProxyGroup(c Config) (*proxyGroup, error) {
@@ -95,9 +95,9 @@ func newProxyGroup(c Config) (*proxyGroup, error) {
 
 func (g *proxyGroup) probe(i int, kind string, timeout time.Duration) (int, error) {
 	// warm up DNS lookup
-	ctx1, cancel1 := context.WithTimeout(context.Background(), time.Second)
-	defer cancel1()
-	addr, err := proxy.GetCachedAddr(g.urls[i].Host).Address(ctx1)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	addr, err := proxy.GetCachedAddr(g.urls[i].Host).Address(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -105,7 +105,8 @@ func (g *proxyGroup) probe(i int, kind string, timeout time.Duration) (int, erro
 	// default tcp test
 	start := time.Now()
 	if kind == "" || kind == "tcp" {
-		conn, derr := net.DialTimeout("tcp", addr, timeout)
+		var d net.Dialer
+		conn, derr := d.DialContext(ctx, "tcp", addr)
 		if derr != nil {
 			return 0, derr
 		}
@@ -114,8 +115,6 @@ func (g *proxyGroup) probe(i int, kind string, timeout time.Duration) (int, erro
 	}
 
 	// url test
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
 	const testURL, testHost = "http://www.gstatic.com/generate_204", "www.gstatic.com:80"
 	req, err := http.NewRequestWithContext(ctx, "GET", testURL, nil)
 	if err != nil {
@@ -162,8 +161,7 @@ func (g *proxyGroup) Select(probe probeConfig) error {
 	current := g.idx
 	g.mu.RUnlock()
 
-	var best int
-	var bestIdx int
+	var bestScore, bestIdx, currentScore int
 	results := make(chan [2]int, len(g.urls))
 
 	for i, u := range g.urls {
@@ -171,21 +169,28 @@ func (g *proxyGroup) Select(probe probeConfig) error {
 			latency, err := g.probe(i, probe.Type, time.Duration(probe.Timeout)*time.Second)
 			g.stat[i].Put(latency, err != nil)
 			score := g.stat[i].Score()
-			results <- [2]int{i, score}
 			debugf("probe %s in %dms, score: %d, err: %v", u.Host, latency, score, err)
+			results <- [2]int{i, score}
 		}(i, u)
 	}
 
 	for range g.urls {
 		r := <-results
 		i, score := r[0], r[1]
-		if best == 0 || score < best {
-			best = score
+		if bestScore == 0 || score < bestScore {
+			bestScore = score
 			bestIdx = i
+		}
+		if i == current {
+			currentScore = score
 		}
 	}
 
 	if current == bestIdx {
+		return nil
+	}
+	// 10% tolerance, avoid flapping
+	if currentScore*9/10 < bestScore {
 		return nil
 	}
 
