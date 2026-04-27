@@ -12,6 +12,8 @@ type Config struct {
 	//   socks5://localhost:port
 	Proxy []string `json:"proxy,omitempty"`
 
+	Subscription string `json:"subscription,omitempty"`
+
 	// Bypass specifies a string that contains comma-separated values
 	// specifying hosts that should be excluded from proxying. Each value is
 	// represented by an IP address (1.2.3.4), an IP address in
