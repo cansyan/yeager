@@ -89,7 +89,6 @@ func main() {
 		log.Printf("init dialer: %s", err)
 		return
 	}
-	defer dialer.Close()
 
 	for _, lnURL := range conf.Listen {
 		u, err := url.Parse(lnURL)

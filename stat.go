@@ -6,7 +6,7 @@ type ServerStat struct {
 	avgRTT           int
 	consecutiveFails int
 	recentFails      int
-	recent           [8]bool
+	recent           [8]bool // latest 8 samples
 	recentIdx        int
 	recentCount      int
 }

@@ -1,7 +1,7 @@
 # Yeager
 
 Features:
-- multiple transports, automatically switch server based on latency
+- multiple transports, failover automatically
 - bypass or block hosts
 
 Usage:

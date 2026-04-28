@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cansyan/yeager/proxy"
@@ -19,12 +20,15 @@ import (
 // proxyGroup implements ContextDialer and performs periodic health checks.
 // proxyGroup should be Close after use.
 type proxyGroup struct {
-	urls    []*url.URL
-	dialers []proxy.ContextDialer
-	ticker  *time.Ticker
-	mu      sync.RWMutex // guards idx
-	idx     int          // current dialer index
-	stat    []*ServerStat
+	urls     []*url.URL
+	dialers  []proxy.ContextDialer
+	mu       sync.RWMutex // guards idx
+	idx      int          // current dialer index
+	stats    []*ServerStat
+	probeCfg probeConfig
+
+	muSelect   sync.Mutex // guard selectNow()
+	lastSelect atomic.Int64
 
 	bypass *hostMatcher
 	block  *hostMatcher
@@ -49,6 +53,7 @@ func newProxyGroup(c Config) (*proxyGroup, error) {
 	}
 
 	g := new(proxyGroup)
+	g.probeCfg = pc
 	if c.Block != "" {
 		g.block = parseHostMatcher(c.Block)
 	}
@@ -58,7 +63,7 @@ func newProxyGroup(c Config) (*proxyGroup, error) {
 
 	g.urls = make([]*url.URL, len(c.Proxy))
 	g.dialers = make([]proxy.ContextDialer, len(c.Proxy))
-	g.stat = make([]*ServerStat, len(c.Proxy))
+	g.stats = make([]*ServerStat, len(c.Proxy))
 
 	rttMax := pc.Timeout * 1000
 	for i, s := range c.Proxy {
@@ -72,24 +77,15 @@ func newProxyGroup(c Config) (*proxyGroup, error) {
 			return nil, err
 		}
 		g.dialers[i] = d
-		g.stat[i] = newServerStat(rttMax)
+		g.stats[i] = newServerStat(rttMax)
 	}
 	if len(g.dialers) == 1 {
 		return g, nil
 	}
 
-	if err := g.Select(pc); err != nil {
+	if err := g.trySelect(); err != nil {
 		return nil, err
 	}
-
-	g.ticker = time.NewTicker(time.Duration(pc.Interval) * time.Second)
-	go func() {
-		for range g.ticker.C {
-			if err := g.Select(pc); err != nil {
-				log.Printf("select transport: %s", err)
-			}
-		}
-	}()
 	return g, nil
 }
 
@@ -156,41 +152,47 @@ func (g *proxyGroup) probe(i int, kind string, timeout time.Duration) (int, erro
 	}
 }
 
+type probeResult struct {
+	i     int
+	score int
+	err   error
+}
+
 func (g *proxyGroup) Select(probe probeConfig) error {
 	g.mu.RLock()
 	current := g.idx
 	g.mu.RUnlock()
 
-	var bestScore, bestIdx, currentScore int
-	results := make(chan [2]int, len(g.urls))
+	bestIdx := -1
+	bestScore := 0
+	results := make(chan probeResult, len(g.urls))
 
 	for i, u := range g.urls {
 		go func(i int, u *url.URL) {
 			latency, err := g.probe(i, probe.Type, time.Duration(probe.Timeout)*time.Second)
-			g.stat[i].Put(latency, err != nil)
-			score := g.stat[i].Score()
+			g.stats[i].Put(latency, err != nil)
+			score := g.stats[i].Score()
 			debugf("probe %s in %dms, score: %d, err: %v", u.Host, latency, score, err)
-			results <- [2]int{i, score}
+			results <- probeResult{i: i, score: score, err: err}
 		}(i, u)
 	}
 
 	for range g.urls {
 		r := <-results
-		i, score := r[0], r[1]
-		if bestScore == 0 || score < bestScore {
-			bestScore = score
-			bestIdx = i
+		if r.err != nil {
+			continue
 		}
-		if i == current {
-			currentScore = score
+		if bestScore == 0 || r.score < bestScore {
+			bestScore = r.score
+			bestIdx = r.i
 		}
 	}
 
-	if current == bestIdx {
-		return nil
+	if bestIdx == -1 {
+		return errors.New("no reachable server")
 	}
-	// 10% tolerance, avoid flapping
-	if currentScore*9/10 < bestScore {
+	g.lastSelect.Store(time.Now().Unix())
+	if current == bestIdx {
 		return nil
 	}
 
@@ -201,7 +203,26 @@ func (g *proxyGroup) Select(probe probeConfig) error {
 	return nil
 }
 
-// implements interface proxy.ContextDialer
+func (g *proxyGroup) trySelect() error {
+	g.muSelect.Lock()
+	defer g.muSelect.Unlock()
+
+	if !g.needRefresh() {
+		return nil
+	}
+
+	return g.Select(g.probeCfg)
+}
+
+func (g *proxyGroup) needRefresh() bool {
+	lastSelect := g.lastSelect.Load()
+	if lastSelect == 0 {
+		return true
+	}
+	return time.Since(time.Unix(lastSelect, 0)) >= time.Duration(g.probeCfg.Interval)*time.Second
+}
+
+// DialContext implements interface proxy.ContextDialer.
 func (g *proxyGroup) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	if g.block != nil && g.block.match(addr) {
 		return nil, errors.New("blocked host")
@@ -216,19 +237,23 @@ func (g *proxyGroup) DialContext(ctx context.Context, network, addr string) (net
 		return conn, nil
 	}
 
+	if len(g.dialers) == 1 {
+		return g.dialers[0].DialContext(ctx, network, addr)
+	}
+
+	// Refresh selection in the background to avoid adding probe latency to the
+	// current dial. The tradeoff is that the first request after a refresh
+	// interval may still use the previous backend once before failover applies.
+	if g.needRefresh() {
+		go g.trySelect()
+	}
+
 	g.mu.RLock()
 	i := g.idx
 	g.mu.RUnlock()
 	d := g.dialers[i]
 	debugf("connect to %s", addr)
 	return d.DialContext(ctx, network, addr)
-}
-
-func (g *proxyGroup) Close() error {
-	if g.ticker != nil {
-		g.ticker.Stop()
-	}
-	return nil
 }
 
 type hostMatcher struct {
