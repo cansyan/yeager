@@ -2,7 +2,7 @@
 
 Features:
 - multiple transports, failover automatically
-- bypass or block hosts
+- bypass, block hosts
 
 Usage:
 ```sh

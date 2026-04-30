@@ -23,89 +23,89 @@ func NewProxyHandler(dialer proxy.ContextDialer) *proxyHandler {
 	return &proxyHandler{dialer: dialer}
 }
 
-func (h *proxyHandler) ServeHTTP(proxyResp http.ResponseWriter, proxyReq *http.Request) {
-	if proxyReq.Method == http.MethodConnect {
-		h.serveHTTPConnect(proxyResp, proxyReq)
+func (h *proxyHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
+	if req.Method == http.MethodConnect {
+		h.serveHTTPConnect(resp, req)
 		return
 	}
-	h.serveHTTPForward(proxyResp, proxyReq)
+	h.serveHTTPForward(resp, req)
 }
 
-func (h *proxyHandler) serveHTTPConnect(proxyResp http.ResponseWriter, proxyReq *http.Request) {
-	if proxyReq.Host == "" {
-		http.Error(proxyResp, "missing host", http.StatusBadRequest)
+func (h *proxyHandler) serveHTTPConnect(resp http.ResponseWriter, req *http.Request) {
+	if req.Host == "" {
+		http.Error(resp, "missing host", http.StatusBadRequest)
 		return
 	}
-	if proxyReq.URL.Port() == "" {
-		http.Error(proxyResp, "missing port in address", http.StatusBadRequest)
+	if req.URL.Port() == "" {
+		http.Error(resp, "missing port in address", http.StatusBadRequest)
 		return
 	}
-	stream, err := h.dialer.DialContext(proxyReq.Context(), "tcp", proxyReq.Host)
+	proxyConn, err := h.dialer.DialContext(req.Context(), "tcp", req.Host)
 	if err != nil {
-		http.Error(proxyResp, "Failed to connect target", http.StatusServiceUnavailable)
-		log.Printf("connect %s: %s", proxyReq.Host, err)
+		http.Error(resp, "Failed to connect target", http.StatusServiceUnavailable)
+		log.Printf("connect %s: %s", req.Host, err)
 		return
 	}
-	defer stream.Close()
+	defer proxyConn.Close()
 
-	hijacker, ok := proxyResp.(http.Hijacker)
+	hijacker, ok := resp.(http.Hijacker)
 	if !ok {
-		http.Error(proxyResp, "Failed to hijack", http.StatusInternalServerError)
+		http.Error(resp, "Failed to hijack", http.StatusInternalServerError)
 		return
 	}
-	proxyConn, _, err := hijacker.Hijack()
+	conn, _, err := hijacker.Hijack()
 	if err != nil {
-		http.Error(proxyResp, "Failed to hijack connection", http.StatusInternalServerError)
+		http.Error(resp, "Failed to hijack connection", http.StatusInternalServerError)
+		log.Print(err)
+		return
+	}
+	defer conn.Close()
+
+	// inform the client
+	conn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
+
+	if err = relay(conn, proxyConn); err != nil {
+		debugf("relay: %s", err)
+	}
+}
+
+func (h *proxyHandler) serveHTTPForward(resp http.ResponseWriter, req *http.Request) {
+	if req.Host == "" {
+		http.Error(resp, "missing host", http.StatusBadRequest)
+		return
+	}
+	host := req.Host
+	if req.URL.Port() == "" {
+		host += ":80"
+	}
+	proxyConn, err := h.dialer.DialContext(req.Context(), "tcp", host)
+	if err != nil {
+		http.Error(resp, "Failed to connect target", http.StatusServiceUnavailable)
 		log.Print(err)
 		return
 	}
 	defer proxyConn.Close()
 
-	// inform the client
-	proxyConn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
-
-	if err = relay(proxyConn, stream); err != nil {
-		debugf("relay: %s", err)
-	}
-}
-
-func (h *proxyHandler) serveHTTPForward(proxyResp http.ResponseWriter, proxyReq *http.Request) {
-	if proxyReq.Host == "" {
-		http.Error(proxyResp, "missing host", http.StatusBadRequest)
-		return
-	}
-	host := proxyReq.Host
-	if proxyReq.URL.Port() == "" {
-		host += ":80"
-	}
-	targetConn, err := h.dialer.DialContext(proxyReq.Context(), "tcp", host)
+	err = req.Write(proxyConn)
 	if err != nil {
-		http.Error(proxyResp, "Failed to connect target", http.StatusServiceUnavailable)
+		http.Error(resp, "Failed to send request", http.StatusServiceUnavailable)
 		log.Print(err)
 		return
 	}
-	defer targetConn.Close()
-
-	err = proxyReq.Write(targetConn)
+	proxyResp, err := http.ReadResponse(bufio.NewReader(proxyConn), req)
 	if err != nil {
-		http.Error(proxyResp, "Failed to send request", http.StatusServiceUnavailable)
-		log.Print(err)
-		return
-	}
-	targetResp, err := http.ReadResponse(bufio.NewReader(targetConn), proxyReq)
-	if err != nil {
-		http.Error(proxyResp, "Failed to read target response", http.StatusServiceUnavailable)
+		http.Error(resp, "Failed to read target response", http.StatusServiceUnavailable)
 		log.Printf("read target response: %s", err)
 		return
 	}
-	defer targetResp.Body.Close()
+	defer proxyResp.Body.Close()
 
-	for key, values := range targetResp.Header {
+	for key, values := range proxyResp.Header {
 		for _, value := range values {
-			proxyResp.Header().Add(key, value)
+			resp.Header().Add(key, value)
 		}
 	}
-	_, err = io.Copy(proxyResp, targetResp.Body)
+	_, err = io.Copy(resp, proxyResp.Body)
 	if err != nil {
 		log.Printf("write response: %s", err)
 		return
