@@ -20,11 +20,12 @@ func TestSelectDoesNotThrottleRetriesAfterFailedProbeRound(t *testing.T) {
 	}
 
 	g := &proxyGroup{
-		urls:  []*url.URL{u1, u2},
-		stats: []*ServerStat{newServerStat(1000), newServerStat(1000)},
+		urls:     []*url.URL{u1, u2},
+		stats:    []*ServerStat{newServerStat(1000), newServerStat(1000)},
+		probeCfg: probeConfig{Type: "tcp", Timeout: 1, Interval: 60},
 	}
 
-	err = g.Select(probeConfig{Type: "tcp", Timeout: 1, Interval: 60})
+	err = g.trySelect()
 	if err == nil {
 		t.Fatal("Select() error = nil, want no reachable server")
 	}

@@ -22,12 +22,11 @@ import (
 type proxyGroup struct {
 	urls     []*url.URL
 	dialers  []proxy.ContextDialer
-	mu       sync.RWMutex // guards idx
-	idx      int          // current dialer index
+	idx      atomic.Int64 // current dialer index
 	stats    []*ServerStat
 	probeCfg probeConfig
 
-	muSelect   sync.Mutex // guard selectNow()
+	mu         sync.Mutex // serializes selection
 	lastSelect atomic.Int64
 
 	bypass *hostMatcher
@@ -158,10 +157,8 @@ type probeResult struct {
 	err   error
 }
 
-func (g *proxyGroup) Select(probe probeConfig) error {
-	g.mu.RLock()
-	current := g.idx
-	g.mu.RUnlock()
+func (g *proxyGroup) selectLocked() error {
+	current := int(g.idx.Load())
 
 	bestIdx := -1
 	bestScore := 0
@@ -169,7 +166,7 @@ func (g *proxyGroup) Select(probe probeConfig) error {
 
 	for i, u := range g.urls {
 		go func(i int, u *url.URL) {
-			latency, err := g.probe(i, probe.Type, time.Duration(probe.Timeout)*time.Second)
+			latency, err := g.probe(i, g.probeCfg.Type, time.Duration(g.probeCfg.Timeout)*time.Second)
 			g.stats[i].Put(latency, err != nil)
 			score := g.stats[i].Score()
 			debugf("probe %s in %dms, score: %d, err: %v", u.Host, latency, score, err)
@@ -196,22 +193,20 @@ func (g *proxyGroup) Select(probe probeConfig) error {
 		return nil
 	}
 
-	g.mu.Lock()
-	g.idx = bestIdx
-	g.mu.Unlock()
+	g.idx.Store(int64(bestIdx))
 	log.Printf("select server: %s", g.urls[bestIdx].Host)
 	return nil
 }
 
 func (g *proxyGroup) trySelect() error {
-	g.muSelect.Lock()
-	defer g.muSelect.Unlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 
 	if !g.needRefresh() {
 		return nil
 	}
 
-	return g.Select(g.probeCfg)
+	return g.selectLocked()
 }
 
 func (g *proxyGroup) needRefresh() bool {
@@ -248,9 +243,7 @@ func (g *proxyGroup) DialContext(ctx context.Context, network, addr string) (net
 		go g.trySelect()
 	}
 
-	g.mu.RLock()
-	i := g.idx
-	g.mu.RUnlock()
+	i := int(g.idx.Load())
 	d := g.dialers[i]
 	debugf("connect to %s", addr)
 	return d.DialContext(ctx, network, addr)
