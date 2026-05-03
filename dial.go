@@ -232,6 +232,7 @@ func (g *proxyGroup) DialContext(ctx context.Context, network, addr string) (net
 		return conn, nil
 	}
 
+	debugf("connect to %s", addr)
 	if len(g.dialers) == 1 {
 		return g.dialers[0].DialContext(ctx, network, addr)
 	}
@@ -245,7 +246,6 @@ func (g *proxyGroup) DialContext(ctx context.Context, network, addr string) (net
 
 	i := int(g.idx.Load())
 	d := g.dialers[i]
-	debugf("connect to %s", addr)
 	return d.DialContext(ctx, network, addr)
 }
 
