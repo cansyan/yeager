@@ -79,6 +79,7 @@ func newProxyGroup(c Config) (*proxyGroup, error) {
 		g.stats[i] = newServerStat(rttMax)
 	}
 	if len(g.dialers) == 1 {
+		debugf("proxy via %s %s", g.urls[0].Scheme, g.urls[0].Host)
 		return g, nil
 	}
 
@@ -194,7 +195,7 @@ func (g *proxyGroup) selectLocked() error {
 	}
 
 	g.idx.Store(int64(bestIdx))
-	log.Printf("select server: %s", g.urls[bestIdx].Host)
+	log.Printf("select proxy %s %s", g.urls[bestIdx].Scheme, g.urls[bestIdx].Host)
 	return nil
 }
 
